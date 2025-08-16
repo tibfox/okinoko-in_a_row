@@ -86,13 +86,9 @@ func FromJSON(data string, v interface{}) error {
 	return json.Unmarshal([]byte(data), v)
 }
 
-// -----------------------------------------------------------------------------
-// Small JSON helpers
-// -----------------------------------------------------------------------------
-
 func returnJsonResponse(action string, success bool, data map[string]interface{}) string {
 	data["action"] = action
 	data["success"] = success
-	b, _ := json.Marshal(data)
-	return string(b)
+	jsonString, _ := json.Marshal(data)
+	return string(jsonString)
 }
