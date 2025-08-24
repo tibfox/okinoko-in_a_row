@@ -10,18 +10,27 @@ import (
 func SetMarketContract(address string) *string {
 
 	if address == "" {
-		// env.Abort("market contract address needed")
+		abortCustom("market contract address is mandatory")
 	}
 
 	creator := getSenderAddress()
 	contractOwner := "contractOwnerAddress" // TODO: set vsc administrative account
 	if creator != contractOwner {
-		// env.Abort(mt.Sprintf(""market contract can only be set by %s", contractOwner)
+		abortCustom(fmt.Sprintf("market contract can only be set by %s", contractOwner))
+
 	}
-	getStore().Set("admin:marketContract", address)
+	getStore().Set(adminKey("marketContract"), address)
 	return returnJsonResponse(
-		"admin_sete_market", true, map[string]interface{}{
-			"details": fmt.Sprintf("market contract set to %s", address),
+		true, map[string]interface{}{
+			"message": fmt.Sprintf("market contract set to %s", address),
 		},
 	)
+}
+
+func getMarketContract() (string, error) {
+	contract := getStore().Get(adminKey("marketContract"))
+	if contract == nil {
+		return "", fmt.Errorf("marketContract not set")
+	}
+	return *contract, nil
 }

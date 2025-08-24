@@ -42,15 +42,9 @@ type MockSDK struct{}
 
 func (m *MockSDK) Log(msg string) { println("MOCK LOG:", msg) }
 
-func (r *MockSDK) GetEnvKey(key string) *string {
-	txIdVal := "0"
-	switch key {
-	case "tx.id":
-		return &txIdVal
-	default:
-		return nil
-
-	}
+func (m *MockSDK) GetEnvKey(key string) *string {
+	val := "0"
+	return &val
 
 }
 

@@ -11,6 +11,6 @@ import (
 
 func main() {
 	debug := true
-	contract.InitState(debug)        // true = use MockState
-	contract.InitSDKInterface(debug) // enable mock env/sdk
+	contract.InitState(debug, "state.json") // true = use MockState
+	contract.InitSDKInterface(debug)        // enable mock env/sdk
 }
