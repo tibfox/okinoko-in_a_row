@@ -5,8 +5,8 @@ package sdk
 
 import (
 	"encoding/json"
-	_ "okinoko_dao/runtime"
 	"strconv"
+	_ "vsc_nft_management/runtime"
 )
 
 //go:wasmimport sdk console.log

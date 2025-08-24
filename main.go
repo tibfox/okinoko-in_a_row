@@ -6,12 +6,11 @@
 package main
 
 import (
-	"okinoko_dao/contract"
+	"vsc_nft_management/contract"
 )
 
 func main() {
 	debug := true
-	contract.InitState(debug)    // true = use MockState
-	contract.InitSKMocks(debug)  // enable mock env/sdk
-	contract.InitENVMocks(debug) // enable mock env/sdk
+	contract.InitState(debug)        // true = use MockState
+	contract.InitSDKInterface(debug) // enable mock env/sdk
 }

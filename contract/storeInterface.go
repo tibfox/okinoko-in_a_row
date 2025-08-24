@@ -3,7 +3,43 @@ package contract
 import (
 	"encoding/json"
 	"os"
+	"vsc_nft_management/sdk"
 )
+
+type Store interface {
+	Set(key, value string)
+	Get(key string) *string
+	Delete(key string)
+}
+
+// singleton used everywhere
+var store Store
+
+func InitState(localDebug bool) {
+	if localDebug {
+		store = NewMockState()
+	} else {
+		store = WasmState{}
+	}
+}
+
+func getStore() Store {
+	return store
+}
+
+type WasmState struct{}
+
+func (WasmState) Set(key, value string) {
+	sdk.StateSetObject(key, value)
+}
+
+func (WasmState) Get(key string) *string {
+	return sdk.StateGetObject(key)
+}
+
+func (WasmState) Delete(key string) {
+	sdk.StateDeleteObject(key)
+}
 
 type MockState struct {
 	db       map[string]string

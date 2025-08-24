@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"strconv"
 	"time"
 )
 
@@ -14,26 +13,16 @@ import (
 ////////////////////////////////////////////////////////////////////////////////
 
 func getSenderAddress() string {
-	return envInterface.GetEnv().Sender.Address.String()
+	return sdkInterface.GetEnv().Sender.Address.String()
 }
 
-func projectKey(id string) string {
-	return "project:" + id
+func collectionKey(id string) string {
+	return "col:" + id
 }
 
-func projectProposalsIndexKey(projectID string) string {
-	return "project:" + projectID + ":proposals"
+func nftKey(id string) string {
+	return "nft:" + id
 }
-
-func proposalKey(id string) string {
-	return "proposal:" + id
-}
-
-func voteKey(projectID, proposalID, voter string) string {
-	return fmt.Sprintf("vote:%s:%s:%s", projectID, proposalID, voter)
-}
-
-const projectsIndexKey = "projects:index"
 
 // generateGUID returns a 16-byte hex string
 func generateGUID() string {
@@ -45,31 +34,14 @@ func generateGUID() string {
 	return hex.EncodeToString(b)
 }
 
-func nowUnix() int64 {
-	// try chain timestamp via env key
-	if tsPtr := envInterface.GetEnvKey("block.timestamp"); tsPtr != nil && *tsPtr != "" {
-		// try parse as integer seconds
-		if v, err := strconv.ParseInt(*tsPtr, 10, 64); err == nil {
-			return v
-		}
-		// try RFC3339
-		if t, err := time.Parse(time.RFC3339, *tsPtr); err == nil {
-			return t.Unix()
-		}
-	}
-	return time.Now().Unix()
-}
-
 func getTxID() string {
-	if t := envInterface.GetEnvKey("tx.id"); t != nil {
+	if t := sdkInterface.GetEnvKey("tx.id"); t != nil {
 		return *t
 	}
 	return ""
 }
 
-///////////////////////////////////////////////////
 // Conversions from/to json strings
-///////////////////////////////////////////////////
 
 // ToJSON converts any struct to a JSON string
 func ToJSON(v interface{}) (string, error) {
