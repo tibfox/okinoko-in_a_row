@@ -9,12 +9,12 @@ import (
 	"vsc_nft_mgmt/sdk"
 )
 
-////////////////////////////////////////////////////////////////////////////////
-// Helpers: keys, guids, time
-////////////////////////////////////////////////////////////////////////////////
-
 func getSenderAddress() sdk.Address {
 	return sdkInterface.GetEnv().Sender.Address
+}
+
+func getCallerAddress() sdk.Address {
+	return sdkInterface.GetEnv().Caller
 }
 
 func nftKey(nftId string) string {
@@ -27,11 +27,11 @@ func adminKey(keyName string) string {
 	return fmt.Sprintf("admin:%s", keyName)
 }
 
-// generateGUID returns a random UUID v4 string
+// returns a random UUID v4 string
 func generateUUID() string {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
-		return fmt.Sprintf("g_%d", time.Now().UnixNano())
+		return fmt.Sprintf("g_%d", time.Now().UnixNano()) //if rand.read fails - fallback to unix timestamp
 	}
 
 	b[6] = (b[6] & 0x0f) | 0x40
@@ -90,12 +90,12 @@ func abortOnError(err error, message string) {
 }
 
 func abortCustom(abortMessage string) *string {
-	// TODO: add mock check
+
+	sdkInterface.Abort(abortMessage)
+
 	return returnJsonResponse(
 		false, map[string]interface{}{
 			"message": abortMessage,
 		},
 	)
-	// TODO: if not mocking then:
-	// env.Abort(abortMessage)
 }

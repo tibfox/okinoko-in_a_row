@@ -32,7 +32,7 @@ func getEnv(arg *string) *string
 func getEnvKey(arg *string) *string
 
 //go:wasmimport sdk hive.get_balance
-func getBalance(arg1 *string, arg2 *string) *int64
+func getBalance(arg1 *string, arg2 *string) *string
 
 //go:wasmimport sdk hive.draw
 func hiveDraw(arg1 *string, arg2 *string) *string
@@ -61,6 +61,15 @@ func contractCall(contractId *string, method *string, payload *string, options *
 // 	"block.height",
 // 	"block.timestamp",
 // }
+
+//go:wasmimport env abort
+func abort(msg, file *string, line, column *int32)
+
+func Abort(msg string) {
+	ln := int32(0)
+	abort(&msg, nil, &ln, &ln)
+	panic(msg)
+}
 
 // Set a value by key in the contract state
 func StateSetObject(key string, value string) {
@@ -157,7 +166,12 @@ func GetEnvKey(key string) *string {
 func GetBalance(address Address, asset Asset) int64 {
 	addr := address.String()
 	as := asset.String()
-	return *getBalance(&addr, &as)
+	balStr := *getBalance(&addr, &as)
+	bal, err := strconv.ParseInt(balStr, 10, 64)
+	if err != nil {
+		panic(err)
+	}
+	return bal
 }
 
 // Transfer assets from caller account to the contract up to the limit specified in `intents`. The transaction must be signed using active authority for Hive accounts.

@@ -2,17 +2,15 @@ package sdk
 
 import "strings"
 
-type Caller struct {
-	Address Address `json:"-"`
+type Intent struct {
+	Type string            `json:"type"`
+	Args map[string]string `json:"args"`
 }
-
-type Intent struct{}
 
 type Sender struct {
 	Address              Address   `json:"id"`
 	RequiredAuths        []Address `json:"required_auths"`
 	RequiredPostingAuths []Address `json:"required_posting_auths"`
-	Intents              []Intent  `json:"intents"`
 }
 
 type AddressDomain string

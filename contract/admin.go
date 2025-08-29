@@ -13,7 +13,7 @@ func SetMarketContract(address string) *string {
 		abortCustom("market contract address is mandatory")
 	}
 
-	creator := getSenderAddress()
+	creator := getCallerAddress()
 	contractOwner := "contractOwnerAddress" // TODO: set vsc administrative account here
 	if creator.String() != contractOwner {
 		abortCustom(fmt.Sprintf("market contract can only be set by %s", contractOwner))

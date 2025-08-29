@@ -10,11 +10,12 @@ import (
 
 // index key prefixes
 const (
-	maxChunkSize                = 1000
-	idxNFTsOfCreatorPrefix      = "idx:nfts:creator:"     // + creator
-	idxNFTsInCollectionPrefix   = "idx:nfts:collection:"  // + collection
-	idxCollectionsOfOwnerPrefix = "idx:collection:owner:" // + owner
-	idxEditionsOfGenesisNFTs    = "idx:editions:genesis:" // + genesisId
+	maxChunkSize                      = 5000                     // all indexes are split into chunks of X entries to avoid overflowing the max size of a key/value in the contract state
+	idxNFTsOfCreatorPrefix            = "idx:nfts:creator:"      // + creator		// holds nfts minted by a given user (only unique and genesis editions)
+	idxCollectionsOfOwnerPrefix       = "idx:collection:owner:"  // + owner			// holds collections for a given user
+	idxNFTsInCollectionPrefix         = "idx:nfts:collection:"   // + collection	// holds nfts contained in a give collection
+	idxEditionsOfGenesisNFTs          = "idx:editions:genesis:"  // + genesisId		// holds editions for a given genesis edition
+	idxAvailableEditionsOfGenesisNFTs = "idx:available:genesis:" // + genesisId		// holds available editions for a given genesis edition
 )
 
 // stores number of chunks for a base index

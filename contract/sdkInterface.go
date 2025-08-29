@@ -9,6 +9,7 @@ type SDKInterface interface {
 	Log(msg string)
 	GetEnv() sdk.Env
 	GetEnvKey(key string) *string
+	Abort(msg string)
 }
 
 // singleton used everywhere
@@ -37,15 +38,20 @@ func (r *RealSDK) GetEnvKey(key string) *string {
 	return sdk.GetEnvKey(key)
 }
 
+func (r *RealSDK) Abort(message string) {
+	sdk.Abort(message)
+}
+
 // Mock sdk - simulating
 type MockSDK struct{}
 
 func (m *MockSDK) Log(msg string) { println("MOCK LOG:", msg) }
 
+func (m *MockSDK) Abort(msg string) { println("MOCK ABORT:", msg) } // not used
+
 func (m *MockSDK) GetEnvKey(key string) *string {
 	val := "0"
 	return &val
-
 }
 
 func (m *MockSDK) GetEnv() sdk.Env {
@@ -63,11 +69,7 @@ func (m *MockSDK) GetEnv() sdk.Env {
 		// RequiredAuths: ["hive:test_senderAddress"]
 		// ,RequiredPostingAuths: [],Intents: []
 	}
-	mockEnv.Caller = sdk.Caller{
-		Address: "hive:test_callerAddress",
-		// RequiredAuths: ["hive:test_senderAddress"]
-		// ,RequiredPostingAuths: [],Intents: []
-	}
+	mockEnv.Caller = sdk.Address("hive:test_callerAddress")
 	mockEnv.Payer = "hive:test_callerAddress"
 
 	return mockEnv
