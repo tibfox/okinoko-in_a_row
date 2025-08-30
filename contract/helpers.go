@@ -7,13 +7,6 @@ import (
 	"vsc_nft_mgmt/sdk"
 )
 
-func getTxID() string {
-	if t := sdk.GetEnvKey("tx.id"); t != nil {
-		return *t
-	}
-	return ""
-}
-
 // Conversions from/to json strings
 
 func ToJSON[T any](v T) (string, error) {
