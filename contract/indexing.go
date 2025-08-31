@@ -11,7 +11,7 @@ import (
 
 // index key prefixes
 const (
-	maxChunkSize           = 5000               // all indexes are split into chunks of X entries to avoid overflowing the max size of a key/value in the contract state
+	maxChunkSize           = 2500               // all indexes are split into chunks of X entries to avoid overflowing the max size of a key/value in the contract state
 	NFTsCreator            = "nfts:creator"     // + creator			// holds nfts minted by a given user (only unique and genesis editions)
 	CollectionsOwner       = "cols:owner:"      // + owner			// holds collections for a given user (to avoid dublicate names)
 	NFTsCollection         = "nfts:col:"        // + collection		// holds nfts contained in a give collection

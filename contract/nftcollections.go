@@ -8,8 +8,8 @@ import (
 )
 
 const (
-	maxNameLength = 100  // used by collections and nfts
-	maxDescLength = 1000 // used by collections and nfts
+	maxNameLength = 100  // maximum length if the name attribute (used by collections and nfts)
+	maxDescLength = 1000 // maximum length if the description attribute (used by collections and nfts)
 )
 
 type NFTCollection struct {
@@ -22,15 +22,14 @@ type NFTCollection struct {
 
 // function arguments
 type CreateNFTCollectionArgs struct {
-	Name        string `json:"name"`
-	Description string `json:"desc"`
+	Name        string `json:"name"` // mandatory: name of the collection
+	Description string `json:"desc"` // optional: description of the collection
 }
 
 //go:wasmexport col_create
 func CreateNFTCollection(payload *string) *string {
 	// env := sdkInterface.GetEnv()
-	input, err := FromJSON[CreateNFTCollectionArgs](*payload)
-	abortOnError(err, "invalid collection args")
+	input := FromJSON[CreateNFTCollectionArgs](*payload, "collection args")
 	input.Validate()
 	env := sdk.GetEnv()
 	creator := env.Sender.Address
@@ -47,8 +46,7 @@ func CreateNFTCollection(payload *string) *string {
 		Description:  input.Description,
 		CreationTxID: env.TxId,
 	}
-	savingErrors := saveNFTCollection(&collection)
-	abortOnError(savingErrors, "saving failed")
+	saveNFTCollection(&collection)
 	setCollectionCount(collectionId + 1)
 	return nil
 }
@@ -56,8 +54,7 @@ func CreateNFTCollection(payload *string) *string {
 //go:wasmexport col_get
 func GetCollection(id *string) *string {
 	collection := loadNFTCollection(*id)
-	jsonStr, err := ToJSON(collection)
-	abortOnError(err, "failed to marshal collection")
+	jsonStr := ToJSON(collection, "collection")
 	return &jsonStr
 }
 
@@ -69,8 +66,7 @@ func GetNFTCollectionsForOwner(owner *string) *string {
 		currentCollection := loadNFTCollection(n)
 		collections = append(collections, *currentCollection)
 	}
-	jsonStr, err := ToJSON(collections)
-	abortOnError(err, "failed to marshal collections")
+	jsonStr := ToJSON(collections, "collections")
 	return &jsonStr
 }
 
@@ -78,7 +74,7 @@ func GetNFTCollectionsForOwner(owner *string) *string {
 func saveNFTCollection(collection *NFTCollection) error {
 	b, err := json.Marshal(collection)
 	if err != nil {
-		return err
+		sdk.Abort("failed to marshal collection")
 	}
 
 	// save collection itself
@@ -99,10 +95,7 @@ func loadNFTCollection(id string) *NFTCollection {
 	if ptr == nil {
 		sdk.Abort(fmt.Sprintf("collection %s not found", id))
 	}
-	collection, err := FromJSON[NFTCollection](*ptr)
-	if err != nil {
-		sdk.Abort(fmt.Sprintf("failed unmarshal collection %s: %v", id, err))
-	}
+	collection := FromJSON[NFTCollection](*ptr, "collection")
 	return collection
 }
 

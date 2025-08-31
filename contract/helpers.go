@@ -9,21 +9,21 @@ import (
 
 // Conversions from/to json strings
 
-func ToJSON[T any](v T) (string, error) {
+func ToJSON[T any](v T, objectType string) string {
 	b, err := json.Marshal(v)
 	if err != nil {
-		return "", err
+		sdk.Abort("failed to marshal " + objectType)
 	}
-	return string(b), nil
+	return string(b)
 }
 
-func FromJSON[T any](data string) (*T, error) {
+func FromJSON[T any](data string, objectType string) *T {
 	data = strings.TrimSpace(data)
 	var v T
 	if err := json.Unmarshal([]byte(data), &v); err != nil {
-		return nil, err
+		sdk.Abort("failed to unmarshal " + objectType)
 	}
-	return &v, nil
+	return &v
 }
 
 func abortOnError(err error, message string) {
