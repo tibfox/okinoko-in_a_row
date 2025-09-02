@@ -7,7 +7,7 @@ import (
 
 // ---------- Data types ----------
 
-type Cell byte
+type Cell int32
 
 const (
 	Empty Cell = 0
@@ -15,13 +15,17 @@ const (
 	O     Cell = 2
 )
 
-type GameStatus byte
+type GameStatus int32
 
 const (
 	WaitingForPlayer GameStatus = 0
 	InProgress       GameStatus = 1
 	Finished         GameStatus = 2
 )
+
+func (s GameStatus) Value() int32 {
+	return int32(s)
+}
 
 type Game struct {
 	ID         string      `json:"id"`
@@ -61,6 +65,21 @@ func GetGame(gameId *string, chain SDKInterface) *string {
 	return getGameImpl(gameId, RealSDK{})
 }
 
+//go:wasmexport getGameForCreator
+func GetGameForCreator(address *string, chain SDKInterface) *string {
+	return getGameForCreatorImpl(address, RealSDK{})
+}
+
+//go:wasmexport getGameForPlayer
+func GetGameForPlayer(address *string, chain SDKInterface) *string {
+	return getGameForPlayerImpl(address, RealSDK{})
+}
+
+//go:wasmexport getGameForGameState
+func GetGameForState(state int32, chain SDKInterface) *string {
+	return getGameForStateImpl(state, RealSDK{})
+}
+
 // ---------- Helpers ----------
 
 func require(cond bool, msg string, chain SDKInterface) {
@@ -77,15 +96,34 @@ func storageKey(gameId string) string {
 func saveGame(g Game, chain SDKInterface) {
 	data, _ := json.Marshal(g)
 	chain.StateSetObject(storageKey(g.ID), string(data))
+	AddIDToIndex(idxGamesCreator+g.Creator.String(), g.ID, chain)
+	AddIDToIndex(idxGamesPlayer+g.Creator.String(), g.ID, chain)
+	if g.Opponent.String() != "" {
+		AddIDToIndex(idxGamesPlayer+g.Opponent.String(), g.ID, chain)
+	}
+	// TODO: improve this
+	if g.Status == WaitingForPlayer {
+		AddIDToIndex(idxGamesForState+string(WaitingForPlayer), g.ID, chain)
+	}
+	if g.Status == InProgress {
+		RemoveIDFromIndex(idxGamesForState+string(WaitingForPlayer), g.ID, chain)
+		AddIDToIndex(idxGamesForState+string(InProgress), g.ID, chain)
+	}
+	if g.Status == Finished {
+		RemoveIDFromIndex(idxGamesForState+string(WaitingForPlayer), g.ID, chain)
+
+		RemoveIDFromIndex(idxGamesForState+string(InProgress), g.ID, chain)
+		AddIDToIndex(idxGamesForState+string(Finished), g.ID, chain)
+	}
 }
 
-func loadGame(id string, chain SDKInterface) (Game, bool) {
+func loadGame(id string, chain SDKInterface) (*Game, bool) {
 	val := chain.StateGetObject(storageKey(id))
 	if val == nil {
-		return Game{}, false
+		return nil, false
 	}
-	var g Game
-	json.Unmarshal([]byte(*val), &g)
+	g := FromJSON[Game](*val, "game")
+
 	return g, true
 }
 
@@ -99,9 +137,9 @@ type CreateGameArgs struct {
 // Create a new game
 func createGameImpl(payload *string, chain SDKInterface) *string {
 	input := FromJSON[CreateGameArgs](*payload, "create game args")
+
 	sender := chain.GetEnv().Sender.Address
 	creator := sender
-
 	// Ensure unique ID
 	_, exists := loadGame(input.GameId, chain)
 	require(!exists, "game already exists", chain)
@@ -121,9 +159,7 @@ func createGameImpl(payload *string, chain SDKInterface) *string {
 		g.Opponent = input.Opponent
 		g.Status = InProgress
 	}
-
 	saveGame(g, chain)
-
 	chain.Log("Game created: " + input.GameId)
 	return nil
 }
@@ -133,14 +169,14 @@ func joinGameImpl(gameId *string, chain SDKInterface) *string {
 	sender := chain.GetEnv().Sender.Address
 	joiner := sender
 
-	g, found := loadGame(*gameId, chain)
-	require(found, "game not found", chain)
+	g, exists := loadGame(*gameId, chain)
+	require(exists, "game not found", chain)
 	require(g.Status == WaitingForPlayer, "cannot join", chain)
 	require(joiner != g.Creator, "creator cannot join", chain)
 
 	g.Opponent = joiner
 	g.Status = InProgress
-	saveGame(g, chain)
+	saveGame(*g, chain)
 
 	chain.Log("Player joined game: " + *gameId)
 	return nil
@@ -156,8 +192,8 @@ func makeMoveImpl(payload *string, chain SDKInterface) *string {
 	input := FromJSON[MakeMoveArgs](*payload, "create game args")
 	sender := chain.GetEnv().Sender.Address
 
-	g, found := loadGame(input.GameId, chain)
-	require(found, "game not found", chain)
+	g, exists := loadGame(input.GameId, chain)
+	require(exists, "game not found", chain)
 	require(g.Status == InProgress, "game not in progress", chain)
 	require(input.Pos >= 0 && input.Pos < 9, "invalid position", chain)
 	require(g.Board[input.Pos] == Empty, "cell occupied", chain)
@@ -195,7 +231,7 @@ func makeMoveImpl(payload *string, chain SDKInterface) *string {
 		}
 	}
 
-	saveGame(g, chain)
+	saveGame(*g, chain)
 	return nil
 }
 
@@ -203,8 +239,8 @@ func makeMoveImpl(payload *string, chain SDKInterface) *string {
 func resignImpl(gameId *string, chain SDKInterface) *string {
 	sender := chain.GetEnv().Sender.Address
 
-	g, found := loadGame(*gameId, chain)
-	require(found, "game not found", chain)
+	g, exists := loadGame(*gameId, chain)
+	require(exists, "game not found", chain)
 	require(g.Status == InProgress, "game not in progress", chain)
 
 	if sender == g.Creator {
@@ -216,7 +252,7 @@ func resignImpl(gameId *string, chain SDKInterface) *string {
 	}
 
 	g.Status = Finished
-	saveGame(g, chain)
+	saveGame(*g, chain)
 	chain.Log("Player resigned: " + string(sender))
 	return nil
 }
@@ -224,11 +260,53 @@ func resignImpl(gameId *string, chain SDKInterface) *string {
 // ---------- Queries ----------
 
 func getGameImpl(gameId *string, chain SDKInterface) *string {
-	g, found := loadGame(*gameId, chain)
-	require(found, "game not found", chain)
+	g, exists := loadGame(*gameId, chain)
+	require(exists, "game not found", chain)
 	data, _ := json.Marshal(g)
 	s := string(data)
 	return &s
+}
+
+func getGameForStateImpl(gameState int32, chain SDKInterface) *string {
+
+	ids := make([]string, 0)
+	switch gameState {
+	case WaitingForPlayer.Value(), InProgress.Value(), Finished.Value():
+		ids = GetIDsFromIndex(idxGamesForState+string(gameState), chain)
+	default:
+		chain.Abort("unknown game state")
+	}
+	return loadGamesForIds(ids, chain)
+}
+
+func loadGamesForIds(ids []string, chain SDKInterface) *string {
+	games := make([]Game, 0, len(ids))
+	for _, v := range ids {
+		g, exists := loadGame(v, chain)
+		require(exists, "game not found", chain)
+		games = append(games, *g)
+	}
+
+	data := ToJSON(games, "games")
+	s := string(data)
+	return &s
+}
+
+func getGameForCreatorImpl(address *string, chain SDKInterface) *string {
+	if *address == "" {
+		chain.Abort("address is mandatory")
+	}
+	ids := make([]string, 0)
+	ids = GetIDsFromIndex(idxGamesCreator+*address, chain)
+	return loadGamesForIds(ids, chain)
+}
+func getGameForPlayerImpl(address *string, chain SDKInterface) *string {
+	if *address == "" {
+		chain.Abort("address is mandatory")
+	}
+	ids := make([]string, 0)
+	ids = GetIDsFromIndex(idxGamesPlayer+*address, chain)
+	return loadGamesForIds(ids, chain)
 }
 
 // ---------- Pure logic ----------

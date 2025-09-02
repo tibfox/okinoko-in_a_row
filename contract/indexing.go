@@ -10,14 +10,10 @@ import (
 
 // index key prefixes
 const (
-	maxChunkSize           = 2500
-	NFTsCreator            = "nfts:creator"     // + creator		// holds nfts minted by a given user (only unique and genesis editions)
-	CollectionsOwner       = "cols:owner:"      // + owner			// holds collections for a given user (to avoid duplicate names)
-	NFTsCollection         = "nfts:col:"        // + collection		// holds nfts contained in a given collection
-	AllEditionsOfGenesis   = "e_all:genesis:"   // + genesisId		// holds editions for a given genesis edition
-	AvailEditionsOfGenesis = "e_avail:genesis:" // + genesisId		// holds available editions for a given genesis edition
-	NFTsCount              = "count:nfts"       // 					// holds a int counter for nfts (to create new ids)
-	CollectionCount        = "count:col"        // 					// holds a int counter for collections (to create new ids)
+	maxChunkSize     = 2500
+	idxGamesCreator  = "games:creator:" // + creator		// holds all games created by an address
+	idxGamesPlayer   = "games:player:"  // + player			// holds all games an address is a player
+	idxGamesForState = "games:"         // + gameState		// holds all games in a specific gameState
 )
 
 // stores number of chunks for a base index

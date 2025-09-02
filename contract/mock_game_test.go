@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"testing"
 	"vsc_tictactoe/sdk"
 )
@@ -24,7 +25,6 @@ func TestCreateGame_NoOpponent(t *testing.T) {
 	chain := NewFakeSDK("creator", "tx1")
 	payload := `{"gameId":"g1","opponent":""}`
 	createGameImpl(&payload, chain)
-
 	g := mustLoadGame(t, chain, "g1")
 	if g.ID != "g1" || g.Creator != "creator" {
 		t.Errorf("unexpected game state: %+v", g)
@@ -244,6 +244,116 @@ func TestGetGame(t *testing.T) {
 	resp := getGameImpl(&gid, chain)
 	if resp == nil || len(*resp) == 0 {
 		t.Errorf("expected non-empty game json")
+	}
+}
+
+func TestGetGameForState(t *testing.T) {
+	chain := NewFakeSDK("creator", "tx10")
+	payload := `{"gameId":"g10","opponent":""}`
+	createGameImpl(&payload, chain)
+
+	stateId := int32(0)
+	resp := getGameForStateImpl(stateId, chain)
+	games := FromJSON[[]Game](*resp, "games")
+	if len(*games) != 1 {
+		t.Errorf("expected 1 game")
+	}
+}
+
+func TestGetGameForAllStateS(t *testing.T) {
+	playerA := "creator"
+	chain := NewFakeSDK(playerA, "tx10")
+	payload := `{"gameId":"g10","opponent":""}`
+	createGameImpl(&payload, chain)
+
+	resp := getGameForStateImpl(int32(0), chain)
+	games := FromJSON[[]Game](*resp, "games")
+	if len(*games) != 1 {
+		t.Errorf("expected 1 game in state 0")
+	}
+
+	// join game
+	playerB := "playerB"
+	gameId := "g10"
+	chain.env.Caller = sdk.Address(playerB)
+	chain.env.Sender.Address = sdk.Address(playerB)
+	joinGameImpl(&gameId, chain)
+	resp = getGameForStateImpl(int32(1), chain)
+	games = FromJSON[[]Game](*resp, "games")
+	if len(*games) != 1 {
+		t.Errorf("expected 1 game in state 1")
+	}
+
+	// resign
+	resignImpl(&gameId, chain)
+	resp = getGameForStateImpl(int32(2), chain)
+	games = FromJSON[[]Game](*resp, "games")
+	if len(*games) != 1 {
+		t.Errorf("expected 1 game in state 2")
+	}
+
+}
+
+func TestGetGameForCreator(t *testing.T) {
+	creator := "creator"
+	chain := NewFakeSDK(creator, "tx10")
+	jsonString := ""
+	game := CreateGameArgs{
+		GameId:   "1",
+		Opponent: "",
+	}
+	for i := 0; i < 10; i++ {
+		game = CreateGameArgs{
+			GameId:   strconv.Itoa(i),
+			Opponent: "",
+		}
+		jsonString = ToJSON(game, "game")
+		createGameImpl(&jsonString, chain)
+	}
+
+	resp := getGameForCreatorImpl(&creator, chain)
+	games := FromJSON[[]Game](*resp, "games")
+	if len(*games) != 10 {
+		t.Errorf("expected 10 game")
+	}
+}
+func TestGetGameForPlayerA(t *testing.T) {
+	creator := "creator"
+	chain := NewFakeSDK(creator, "tx10")
+	jsonString := ""
+	game := CreateGameArgs{
+		GameId:   "1",
+		Opponent: "",
+	}
+	for i := 0; i < 10; i++ {
+		game = CreateGameArgs{
+			GameId:   strconv.Itoa(i),
+			Opponent: "",
+		}
+		jsonString = ToJSON(game, "game")
+		createGameImpl(&jsonString, chain)
+	}
+
+	resp := getGameForPlayerImpl(&creator, chain)
+	games := FromJSON[[]Game](*resp, "games")
+	if len(*games) != 10 {
+		t.Errorf("expected 10 game")
+	}
+}
+func TestGetGameForPlayerB(t *testing.T) {
+	playerA := "creator"
+	playerB := "player"
+	chain := NewFakeSDK(playerA, "tx10")
+	payloadCreate := `{"gameId":"g10","opponent":""}`
+	createGameImpl(&payloadCreate, chain)
+	chain.env.Sender.Address = sdk.Address(playerB)
+	chain.env.Caller = sdk.Address(playerB)
+	gameId := "g10"
+	joinGameImpl(&gameId, chain)
+	resp := getGameForPlayerImpl(&playerB, chain)
+	games := FromJSON[[]Game](*resp, "games")
+	if len(*games) != 1 {
+		t.Errorf("expected 1 game")
 	}
 }
 
