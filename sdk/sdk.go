@@ -6,7 +6,7 @@ package sdk
 import (
 	"encoding/json"
 	"strconv"
-	_ "vsc_nft_mgmt/runtime"
+	_ "vsc_tictactoe/runtime"
 )
 
 //go:wasmimport sdk console.log

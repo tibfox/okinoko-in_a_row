@@ -3,7 +3,7 @@ package main
 import (
 	"encoding/json"
 	"strings"
-	"vsc_nft_mgmt/sdk"
+	"vsc_tictactoe/sdk"
 )
 
 // Conversions from/to json strings

@@ -6,4 +6,5 @@ package sdk
 func StateSetObject(key, value string)  {}
 func StateGetObject(key string) *string { return nil }
 func Abort(msg string)                  {}
+func Log(msg string)                    {}
 func GetEnv() Env                       { return Env{} }

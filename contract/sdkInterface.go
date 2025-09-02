@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 	"testing"
-	"vsc_nft_mgmt/sdk"
+	"vsc_tictactoe/sdk"
 )
 
 // --- SDK interface abstraction ---
@@ -21,6 +21,7 @@ type SDKInterface interface {
 	StateSetObject(key, value string)
 	StateGetObject(key string) *string
 	Abort(msg string)
+	Log(msg string)
 	GetEnv() SDKInterfaceEnv
 }
 
@@ -30,6 +31,7 @@ type RealSDK struct{}
 func (RealSDK) StateSetObject(key, value string)  { sdk.StateSetObject(key, value) }
 func (RealSDK) StateGetObject(key string) *string { return sdk.StateGetObject(key) }
 func (RealSDK) Abort(msg string)                  { sdk.Abort(msg) }
+func (RealSDK) Log(msg string)                    { sdk.Log(msg) }
 func (RealSDK) GetEnv() SDKInterfaceEnv {
 	e := sdk.GetEnv()
 	return SDKInterfaceEnv{
@@ -74,6 +76,10 @@ func (f *FakeSDK) Abort(msg string) {
 	f.aborted = true
 	f.abortMsg = msg
 	panic(fmt.Sprintf("Abort called: %s", msg))
+}
+
+func (f *FakeSDK) Log(msg string) {
+	fmt.Sprintf("Abort called: %s", msg)
 }
 
 func (f *FakeSDK) GetEnv() SDKInterfaceEnv {
