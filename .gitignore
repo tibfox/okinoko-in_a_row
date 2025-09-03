@@ -1,6 +1,4 @@
 .DS_Store
-main.wasm
-main-striped.wasm
+build/
+data/
 .env
-hiveConfig.json
-identityConfig.json
