@@ -43,42 +43,42 @@ type Game struct {
 // Exported Functions
 //
 //go:wasmexport createGame
-func CreateGame(payload *string, chain SDKInterface) *string {
+func CreateGame(payload *string) *string {
 	return createGameImpl(payload, RealSDK{})
 }
 
 //go:wasmexport joinGame
-func JoinGame(gameId *string, chain SDKInterface) *string {
+func JoinGame(gameId *string) *string {
 	return joinGameImpl(gameId, RealSDK{})
 }
 
 //go:wasmexport makeMove
-func MakeMove(payload *string, chain SDKInterface) *string {
+func MakeMove(payload *string) *string {
 	return makeMoveImpl(payload, RealSDK{})
 }
 
 //go:wasmexport resign
-func Resign(gameId *string, chain SDKInterface) *string {
+func Resign(gameId *string) *string {
 	return resignImpl(gameId, RealSDK{})
 }
 
 //go:wasmexport getGame
-func GetGame(gameId *string, chain SDKInterface) *string {
+func GetGame(gameId *string) *string {
 	return getGameImpl(gameId, RealSDK{})
 }
 
 //go:wasmexport getGameForCreator
-func GetGameForCreator(address *string, chain SDKInterface) *string {
+func GetGameForCreator(address *string) *string {
 	return getGameForCreatorImpl(address, RealSDK{})
 }
 
 //go:wasmexport getGameForPlayer
-func GetGameForPlayer(address *string, chain SDKInterface) *string {
+func GetGameForPlayer(address *string) *string {
 	return getGameForPlayerImpl(address, RealSDK{})
 }
 
 //go:wasmexport getGameForGameState
-func GetGameForState(state int32, chain SDKInterface) *string {
+func GetGameForState(state int32) *string {
 	return getGameForStateImpl(state, RealSDK{})
 }
 
