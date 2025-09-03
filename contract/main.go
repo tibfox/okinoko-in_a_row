@@ -28,14 +28,16 @@ func (s GameStatus) Value() int32 {
 }
 
 type Game struct {
-	ID         string      `json:"id"`
-	Creator    sdk.Address `json:"creator"`
-	Opponent   sdk.Address `json:"opponent"`
-	Board      [9]Cell     `json:"board"`
-	Turn       Cell        `json:"turn"`
-	MovesCount int         `json:"moves_count"`
-	Status     GameStatus  `json:"status"`
-	Winner     Cell        `json:"winner"`
+	ID            string       `json:"id"`
+	Creator       sdk.Address  `json:"creator"`
+	Opponent      *sdk.Address `json:"opponent"`
+	Board         [9]Cell      `json:"board"`
+	Turn          Cell         `json:"turn"`
+	MovesCount    int          `json:"moves_count"`
+	Status        GameStatus   `json:"status"`
+	Winner        *sdk.Address `json:"winner"`
+	GameAsset     *sdk.Asset   `json:"gameAsset"`
+	GameBetAmount *int64       `json:"gameBetAmount"`
 }
 
 // Exported Functions
@@ -98,7 +100,7 @@ func saveGame(g Game, chain SDKInterface) {
 	chain.StateSetObject(storageKey(g.ID), string(data))
 	AddIDToIndex(idxGamesCreator+g.Creator.String(), g.ID, chain)
 	AddIDToIndex(idxGamesPlayer+g.Creator.String(), g.ID, chain)
-	if g.Opponent.String() != "" {
+	if g.Opponent != nil {
 		AddIDToIndex(idxGamesPlayer+g.Opponent.String(), g.ID, chain)
 	}
 	// TODO: improve this
@@ -130,8 +132,7 @@ func loadGame(id string, chain SDKInterface) (*Game, bool) {
 // ---------- Core logic ----------
 
 type CreateGameArgs struct {
-	GameId   string      `json:"gameId"`
-	Opponent sdk.Address `json:"opponent"`
+	GameId string `json:"gameId"`
 }
 
 // Create a new game
@@ -143,22 +144,29 @@ func createGameImpl(payload *string, chain SDKInterface) *string {
 	// Ensure unique ID
 	_, exists := loadGame(input.GameId, chain)
 	require(!exists, "game already exists", chain)
-
 	g := Game{
-		ID:         input.GameId,
-		Creator:    creator,
-		Opponent:   "",
-		Board:      [9]Cell{},
-		Turn:       X,
-		MovesCount: 0,
-		Status:     WaitingForPlayer,
-		Winner:     Empty,
+		ID:            input.GameId,
+		Creator:       creator,
+		Opponent:      nil,
+		Board:         [9]Cell{},
+		Turn:          X,
+		MovesCount:    0,
+		Status:        WaitingForPlayer,
+		Winner:        nil,
+		GameAsset:     nil,
+		GameBetAmount: nil,
 	}
 
-	if input.Opponent != "" && input.Opponent != creator {
-		g.Opponent = input.Opponent
-		g.Status = InProgress
+	// check if the game is gambling
+	ta := GetFirstTransferAllow(chain.GetEnv().Intents, chain)
+
+	if ta != nil {
+
+		chain.HiveDraw(ta.Limit, ta.Token)
+		g.GameBetAmount = &ta.Limit
+		g.GameAsset = &ta.Token
 	}
+
 	saveGame(g, chain)
 	chain.Log("Game created: " + input.GameId)
 	return nil
@@ -174,7 +182,16 @@ func joinGameImpl(gameId *string, chain SDKInterface) *string {
 	require(g.Status == WaitingForPlayer, "cannot join", chain)
 	require(joiner != g.Creator, "creator cannot join", chain)
 
-	g.Opponent = joiner
+	// check if we are gambling
+	if g.GameAsset != nil && *g.GameBetAmount > int64(0) {
+		ta := GetFirstTransferAllow(chain.GetEnv().Intents, chain)
+		if ta == nil || ta.Token != *g.GameAsset || ta.Limit != *g.GameBetAmount {
+			chain.Abort("Game needs an equal bet in intents")
+		} else {
+			chain.HiveDraw(ta.Limit, ta.Token)
+		}
+	}
+	g.Opponent = &joiner
 	g.Status = InProgress
 	saveGame(*g, chain)
 
@@ -200,11 +217,12 @@ func makeMoveImpl(payload *string, chain SDKInterface) *string {
 
 	// Determine mark
 	var mark Cell
-	if sender == g.Creator {
+	switch sender {
+	case g.Creator:
 		mark = X
-	} else if sender == g.Opponent {
+	case *g.Opponent:
 		mark = O
-	} else {
+	default:
 		chain.Abort("not a player")
 	}
 
@@ -216,21 +234,36 @@ func makeMoveImpl(payload *string, chain SDKInterface) *string {
 
 	// Check winner
 	if winner := checkWinner(g.Board); winner != Empty {
-		g.Winner = winner
+		switch winner {
+		case X:
+			g.Winner = &g.Creator
+		case O:
+			g.Winner = g.Opponent
+
+		}
 		g.Status = Finished
-		chain.Log("Game " + input.GameId + " won by " + string(mark))
-	} else if g.MovesCount >= 9 {
+		chain.Log("Game " + input.GameId + " won by " + g.Winner.String())
+		if g.GameBetAmount != nil {
+			// send to pot to the winner
+			chain.HiveTransfer(*g.Winner, *g.GameBetAmount*2, *g.GameAsset)
+		}
+	} else if g.MovesCount >= 9 { // a came can have max 9 turns
 		g.Status = Finished
 		chain.Log("Game " + input.GameId + " is a draw")
+		if g.GameBetAmount != nil {
+			// split the pot
+			chain.HiveTransfer(g.Creator, *g.GameBetAmount, *g.GameAsset)
+			chain.HiveTransfer(*g.Opponent, *g.GameBetAmount, *g.GameAsset)
+		}
 	} else {
-		// Switch turn
-		if g.Turn == X {
+
+		switch g.Turn {
+		case X:
 			g.Turn = O
-		} else {
+		case O:
 			g.Turn = X
 		}
 	}
-
 	saveGame(*g, chain)
 	return nil
 }
@@ -241,14 +274,28 @@ func resignImpl(gameId *string, chain SDKInterface) *string {
 
 	g, exists := loadGame(*gameId, chain)
 	require(exists, "game not found", chain)
-	require(g.Status == InProgress, "game not in progress", chain)
-
-	if sender == g.Creator {
-		g.Winner = O
-	} else if sender == g.Opponent {
-		g.Winner = X
+	require(g.Status != Finished, "game is already finished", chain)
+	if g.Opponent == nil {
+		if g.GameBetAmount != nil {
+			// send funds back to creator
+			chain.HiveTransfer(g.Creator, *g.GameBetAmount, *g.GameAsset)
+		}
 	} else {
-		chain.Abort("not a player")
+		switch sender {
+		case g.Creator:
+			g.Winner = g.Opponent
+			if g.GameBetAmount != nil {
+				chain.HiveTransfer(*g.Opponent, *g.GameBetAmount*2, *g.GameAsset)
+			}
+
+		case *g.Opponent:
+			g.Winner = &g.Creator
+			if g.GameBetAmount != nil {
+				chain.HiveTransfer(g.Creator, *g.GameBetAmount*2, *g.GameAsset)
+			}
+		default:
+			chain.Abort("not a player")
+		}
 	}
 
 	g.Status = Finished

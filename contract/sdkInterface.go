@@ -12,9 +12,9 @@ type SDKInterfaceEnv struct {
 	Sender struct {
 		Address sdk.Address
 	}
-	Caller sdk.Address
-
-	TxId string
+	Caller  sdk.Address
+	TxId    string
+	Intents []sdk.Intent
 }
 
 type SDKInterface interface {
@@ -23,6 +23,8 @@ type SDKInterface interface {
 	Abort(msg string)
 	Log(msg string)
 	GetEnv() SDKInterfaceEnv
+	HiveDraw(amount int64, asset sdk.Asset)
+	HiveTransfer(to sdk.Address, amount int64, asset sdk.Asset)
 }
 
 // RealSDK is the production implementation that forwards to vsc_nft_mgmt/sdk
@@ -38,6 +40,12 @@ func (RealSDK) GetEnv() SDKInterfaceEnv {
 		Sender: struct{ Address sdk.Address }{Address: e.Sender.Address},
 		TxId:   e.TxId,
 	}
+}
+func (RealSDK) HiveDraw(amount int64, asset sdk.Asset) {
+	sdk.HiveDraw(amount, asset)
+}
+func (RealSDK) HiveTransfer(to sdk.Address, amount int64, asset sdk.Asset) {
+	sdk.HiveTransfer(to, amount, asset)
 }
 
 // fake sdk for testing
@@ -56,6 +64,22 @@ func NewFakeSDK(sender string, txid string) *FakeSDK {
 			TxId:   txid,
 			Sender: struct{ Address sdk.Address }{Address: sdk.Address(sender)},
 			Caller: sdk.Address(sender),
+			Intents: []sdk.Intent{
+				{
+					Type: "invalid",
+					Args: map[string]string{
+						"to":     "p2",
+						"amount": "100",
+					},
+				},
+				{
+					Type: "transfer.allow",
+					Args: map[string]string{
+						"limit": "10000",
+						"token": "hive",
+					},
+				},
+			},
 		},
 	}
 }
@@ -70,6 +94,15 @@ func (f *FakeSDK) StateGetObject(key string) *string {
 		return nil
 	}
 	return &val
+}
+
+func (f *FakeSDK) HiveDraw(amount int64, asset sdk.Asset) {
+	sender := f.GetEnv().Sender.Address
+	fmt.Printf("We take %d %s from %s\n", amount, asset.String(), sender)
+}
+
+func (f *FakeSDK) HiveTransfer(to sdk.Address, amount int64, asset sdk.Asset) {
+	fmt.Printf("We send %d %s to %s\n", amount, asset.String(), to.String())
 }
 
 func (f *FakeSDK) Abort(msg string) {

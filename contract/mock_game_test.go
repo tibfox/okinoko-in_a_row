@@ -23,10 +23,10 @@ func mustLoadGame(t *testing.T, chain *FakeSDK, id string) Game {
 
 func TestCreateGame_NoOpponent(t *testing.T) {
 	chain := NewFakeSDK("creator", "tx1")
-	payload := `{"gameId":"g1","opponent":""}`
+	payload := `{"gameId":"g1"}`
 	createGameImpl(&payload, chain)
 	g := mustLoadGame(t, chain, "g1")
-	if g.ID != "g1" || g.Creator != "creator" {
+	if g.ID != "g1" || g.Creator != sdk.Address("creator") {
 		t.Errorf("unexpected game state: %+v", g)
 	}
 	if g.Status != WaitingForPlayer {
@@ -34,23 +34,9 @@ func TestCreateGame_NoOpponent(t *testing.T) {
 	}
 }
 
-func TestCreateGame_WithOpponent(t *testing.T) {
-	chain := NewFakeSDK("creator", "tx2")
-	payload := `{"gameId":"g2","opponent":"opp"}`
-	createGameImpl(&payload, chain)
-
-	g := mustLoadGame(t, chain, "g2")
-	if g.Status != InProgress {
-		t.Errorf("expected InProgress, got %v", g.Status)
-	}
-	if g.Opponent != "opp" {
-		t.Errorf("expected opponent 'opp', got %v", g.Opponent)
-	}
-}
-
 func TestCreateGame_AlreadyExists(t *testing.T) {
 	chain := NewFakeSDK("creator", "tx2b")
-	payload := `{"gameId":"g2b","opponent":""}`
+	payload := `{"gameId":"g2b"}`
 	createGameImpl(&payload, chain)
 
 	defer expectAbort(t, chain, "game already exists")
@@ -59,7 +45,7 @@ func TestCreateGame_AlreadyExists(t *testing.T) {
 
 func TestJoinGame(t *testing.T) {
 	chain := NewFakeSDK("creator", "tx3")
-	payload := `{"gameId":"g3","opponent":""}`
+	payload := `{"gameId":"g3"}`
 	createGameImpl(&payload, chain)
 
 	chain.env.Sender.Address = "opp"
@@ -67,25 +53,26 @@ func TestJoinGame(t *testing.T) {
 	joinGameImpl(&gid, chain)
 
 	g := mustLoadGame(t, chain, "g3")
-	if g.Status != InProgress || g.Opponent != "opp" {
+	if g.Status != InProgress || *g.Opponent != sdk.Address("opp") {
 		t.Errorf("unexpected game state: %+v", g)
 	}
 }
 
 func TestJoinGame_Errors(t *testing.T) {
 	chain := NewFakeSDK("creator", "tx4")
-	payload := `{"gameId":"g4","opponent":"opp"}`
+	payload := `{"gameId":"g4"}`
 	createGameImpl(&payload, chain)
-
-	chain.env.Sender.Address = "someone"
+	chain.env.Sender.Address = "opp"
 	gid := "g4"
+	joinGameImpl(&gid, chain)
+	chain.env.Sender.Address = "someone"
 	defer expectAbort(t, chain, "cannot join")
 	joinGameImpl(&gid, chain)
 }
 
 func TestJoinGame_CreatorCannotJoin(t *testing.T) {
 	chain := NewFakeSDK("creator", "tx4b")
-	payload := `{"gameId":"g4b","opponent":""}`
+	payload := `{"gameId":"g4b"}`
 	createGameImpl(&payload, chain)
 
 	chain.env.Sender.Address = "creator"
@@ -96,8 +83,12 @@ func TestJoinGame_CreatorCannotJoin(t *testing.T) {
 
 func TestMakeMove_ValidFlow_Win(t *testing.T) {
 	chain := NewFakeSDK("p1", "tx5")
-	payload := `{"gameId":"g5","opponent":"p2"}`
+	payload := `{"gameId":"g5"}`
+	gameId := "g5"
 	createGameImpl(&payload, chain)
+	chain.env.Sender.Address = sdk.Address("p2")
+	joinGameImpl(&gameId, chain)
+	chain.env.Sender.Address = sdk.Address("p1")
 
 	moves := []struct {
 		player sdk.Address
@@ -112,17 +103,19 @@ func TestMakeMove_ValidFlow_Win(t *testing.T) {
 	}
 
 	g := mustLoadGame(t, chain, "g5")
-	if g.Status != Finished || g.Winner != X {
+	if g.Status != Finished || *g.Winner != g.Creator {
 		t.Errorf("expected X to win, got %+v", g)
 	}
 }
 
 func TestMakeMove_InvalidTurn(t *testing.T) {
 	chain := NewFakeSDK("p1", "tx6")
-	payload := `{"gameId":"g6","opponent":"p2"}`
+	payload := `{"gameId":"g6"}`
 	createGameImpl(&payload, chain)
 
 	chain.env.Sender.Address = "p2"
+	game := "g6"
+	joinGameImpl(&game, chain)
 	move := `{"gameId":"g6","pos":0}`
 	defer expectAbort(t, chain, "not your turn")
 	makeMoveImpl(&move, chain)
@@ -130,8 +123,13 @@ func TestMakeMove_InvalidTurn(t *testing.T) {
 
 func TestMakeMove_CellOccupied(t *testing.T) {
 	chain := NewFakeSDK("p1", "tx7")
-	payload := `{"gameId":"g7","opponent":"p2"}`
+	payload := `{"gameId":"g7"}`
 	createGameImpl(&payload, chain)
+
+	chain.env.Sender.Address = "p2"
+	game := "g7"
+	joinGameImpl(&game, chain)
+	chain.env.Sender.Address = "p1"
 
 	move1 := `{"gameId":"g7","pos":0}`
 	makeMoveImpl(&move1, chain)
@@ -144,8 +142,11 @@ func TestMakeMove_CellOccupied(t *testing.T) {
 
 func TestMakeMove_Draw(t *testing.T) {
 	chain := NewFakeSDK("p1", "tx7d")
-	payload := `{"gameId":"gd","opponent":"p2"}`
+	payload := `{"gameId":"gd"}`
 	createGameImpl(&payload, chain)
+	chain.env.Sender.Address = "p2"
+	game := "gd"
+	joinGameImpl(&game, chain)
 
 	moves := []struct {
 		player sdk.Address
@@ -162,14 +163,14 @@ func TestMakeMove_Draw(t *testing.T) {
 	}
 
 	g := mustLoadGame(t, chain, "gd")
-	if g.Status != Finished || g.Winner != Empty {
+	if g.Status != Finished || g.Winner != nil {
 		t.Errorf("expected draw, got %+v", g)
 	}
 }
 
 func TestMakeMove_InvalidPosition(t *testing.T) {
 	chain := NewFakeSDK("p1", "tx11")
-	payload := `{"gameId":"g11","opponent":"p2"}`
+	payload := `{"gameId":"g11"}`
 	createGameImpl(&payload, chain)
 
 	badMoves := []int{-1, 9, 99}
@@ -186,8 +187,11 @@ func TestMakeMove_InvalidPosition(t *testing.T) {
 
 func TestMakeMove_NotAPlayer(t *testing.T) {
 	chain := NewFakeSDK("p1", "tx12")
-	payload := `{"gameId":"g12","opponent":"p2"}`
+	payload := `{"gameId":"g12"}`
 	createGameImpl(&payload, chain)
+	chain.env.Sender.Address = "p2"
+	gid := "g12"
+	joinGameImpl(&gid, chain)
 
 	chain.env.Sender.Address = "intruder"
 	move := `{"gameId":"g12","pos":0}`
@@ -197,47 +201,57 @@ func TestMakeMove_NotAPlayer(t *testing.T) {
 
 func TestResign_CreatorResigns(t *testing.T) {
 	chain := NewFakeSDK("p1", "tx8")
-	payload := `{"gameId":"g8","opponent":"p2"}`
+	payload := `{"gameId":"g8"}`
+	gid := "g8"
 	createGameImpl(&payload, chain)
 
-	gid := "g8"
+	chain.env.Sender.Address = "p2"
+	joinGameImpl(&gid, chain)
+
+	chain.env.Sender.Address = "p1"
 	resignImpl(&gid, chain)
 
-	g := mustLoadGame(t, chain, "g8")
-	if g.Status != Finished || g.Winner != O {
+	g := mustLoadGame(t, chain, gid)
+
+	if g.Status != Finished || *g.Winner != *g.Opponent {
 		t.Errorf("expected O wins on creator resign, got %+v", g)
 	}
 }
 
 func TestResign_OpponentResigns(t *testing.T) {
 	chain := NewFakeSDK("p1", "tx9")
-	payload := `{"gameId":"g9","opponent":"p2"}`
+	payload := `{"gameId":"g9"}`
 	createGameImpl(&payload, chain)
 
 	chain.env.Sender.Address = "p2"
 	gid := "g9"
+	joinGameImpl(&gid, chain)
+
 	resignImpl(&gid, chain)
 
 	g := mustLoadGame(t, chain, "g9")
-	if g.Status != Finished || g.Winner != X {
+	if g.Status != Finished || *g.Winner != g.Creator {
 		t.Errorf("expected X wins on opponent resign, got %+v", g)
 	}
 }
 
 func TestResign_NotAPlayer(t *testing.T) {
 	chain := NewFakeSDK("p1", "tx9b")
-	payload := `{"gameId":"g9b","opponent":"p2"}`
+	payload := `{"gameId":"g9b"}`
 	createGameImpl(&payload, chain)
+	chain.env.Sender.Address = "p2"
+	gid := "g9b"
+	joinGameImpl(&gid, chain)
 
 	chain.env.Sender.Address = "intruder"
-	gid := "g9b"
+
 	defer expectAbort(t, chain, "not a player")
 	resignImpl(&gid, chain)
 }
 
 func TestGetGame(t *testing.T) {
 	chain := NewFakeSDK("creator", "tx10")
-	payload := `{"gameId":"g10","opponent":""}`
+	payload := `{"gameId":"g10"}`
 	createGameImpl(&payload, chain)
 
 	gid := "g10"
@@ -249,7 +263,7 @@ func TestGetGame(t *testing.T) {
 
 func TestGetGameForState(t *testing.T) {
 	chain := NewFakeSDK("creator", "tx10")
-	payload := `{"gameId":"g10","opponent":""}`
+	payload := `{"gameId":"g10"}`
 	createGameImpl(&payload, chain)
 
 	stateId := int32(0)
@@ -263,7 +277,7 @@ func TestGetGameForState(t *testing.T) {
 func TestGetGameForAllStateS(t *testing.T) {
 	playerA := "creator"
 	chain := NewFakeSDK(playerA, "tx10")
-	payload := `{"gameId":"g10","opponent":""}`
+	payload := `{"gameId":"g10"}`
 	createGameImpl(&payload, chain)
 
 	resp := getGameForStateImpl(int32(0), chain)
@@ -299,13 +313,11 @@ func TestGetGameForCreator(t *testing.T) {
 	chain := NewFakeSDK(creator, "tx10")
 	jsonString := ""
 	game := CreateGameArgs{
-		GameId:   "1",
-		Opponent: "",
+		GameId: "1",
 	}
 	for i := 0; i < 10; i++ {
 		game = CreateGameArgs{
-			GameId:   strconv.Itoa(i),
-			Opponent: "",
+			GameId: strconv.Itoa(i),
 		}
 		jsonString = ToJSON(game, "game")
 		createGameImpl(&jsonString, chain)
@@ -322,13 +334,11 @@ func TestGetGameForPlayerA(t *testing.T) {
 	chain := NewFakeSDK(creator, "tx10")
 	jsonString := ""
 	game := CreateGameArgs{
-		GameId:   "1",
-		Opponent: "",
+		GameId: "1",
 	}
 	for i := 0; i < 10; i++ {
 		game = CreateGameArgs{
-			GameId:   strconv.Itoa(i),
-			Opponent: "",
+			GameId: strconv.Itoa(i),
 		}
 		jsonString = ToJSON(game, "game")
 		createGameImpl(&jsonString, chain)
@@ -344,7 +354,7 @@ func TestGetGameForPlayerB(t *testing.T) {
 	playerA := "creator"
 	playerB := "player"
 	chain := NewFakeSDK(playerA, "tx10")
-	payloadCreate := `{"gameId":"g10","opponent":""}`
+	payloadCreate := `{"gameId":"g10"}`
 	createGameImpl(&payloadCreate, chain)
 	chain.env.Sender.Address = sdk.Address(playerB)
 	chain.env.Caller = sdk.Address(playerB)
