@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"strconv"
 	"strings"
 	"vsc_tictactoe/sdk"
@@ -12,7 +13,7 @@ import (
 func ToJSON[T any](v T, objectType string) string {
 	b, err := json.Marshal(v)
 	if err != nil {
-		sdk.Abort("failed to marshal " + objectType)
+		sdk.Abort(fmt.Sprintf("failed to marshal %s\nInput data:%+v\nError: %v:", objectType, v, err))
 	}
 	return string(b)
 }
@@ -21,7 +22,8 @@ func FromJSON[T any](data string, objectType string) *T {
 	data = strings.TrimSpace(data)
 	var v T
 	if err := json.Unmarshal([]byte(data), &v); err != nil {
-		sdk.Abort("failed to unmarshal " + objectType)
+		sdk.Abort(fmt.Sprintf(
+			"failed to unmarshal %s\nInput data:%s\nError: %v:", objectType, data, err))
 	}
 	return &v
 }
