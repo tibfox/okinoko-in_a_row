@@ -121,7 +121,7 @@ func saveGame(g Game, chain SDKInterface) {
 
 func loadGame(id string, chain SDKInterface) (*Game, bool) {
 	val := chain.StateGetObject(storageKey(id))
-	if val == nil {
+	if val == nil || *val == "" {
 		return nil, false
 	}
 	g := FromJSON[Game](*val, "game")

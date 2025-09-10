@@ -11,7 +11,7 @@ import (
 // helper to unmarshal game state from chain
 func mustLoadGame(t *testing.T, chain *FakeSDK, id string) Game {
 	val := chain.StateGetObject(storageKey(id))
-	if val == nil {
+	if val == nil || *val == "" {
 		chain.Abort(fmt.Sprintf("game %s not found in state", id))
 	}
 	var g Game
