@@ -40,53 +40,11 @@ type Game struct {
 	GameBetAmount *int64       `json:"gameBetAmount"`
 }
 
-// Exported Functions
-//
-//go:wasmexport createGame
-func CreateGame(payload *string) *string {
-	return createGameImpl(payload, RealSDK{})
-}
-
-//go:wasmexport joinGame
-func JoinGame(gameId *string) *string {
-	return joinGameImpl(gameId, RealSDK{})
-}
-
-//go:wasmexport makeMove
-func MakeMove(payload *string) *string {
-	return makeMoveImpl(payload, RealSDK{})
-}
-
-//go:wasmexport resign
-func Resign(gameId *string) *string {
-	return resignImpl(gameId, RealSDK{})
-}
-
-//go:wasmexport getGame
-func GetGame(gameId *string) *string {
-	return getGameImpl(gameId, RealSDK{})
-}
-
-//go:wasmexport getGameForCreator
-func GetGameForCreator(address *string) *string {
-	return getGameForCreatorImpl(address, RealSDK{})
-}
-
-//go:wasmexport getGameForPlayer
-func GetGameForPlayer(address *string) *string {
-	return getGameForPlayerImpl(address, RealSDK{})
-}
-
-//go:wasmexport getGameForGameState
-func GetGameForState(state *int32) *string {
-	return getGameForStateImpl(state, RealSDK{})
-}
-
 // ---------- Helpers ----------
 
-func require(cond bool, msg string, chain SDKInterface) {
+func require(cond bool, msg string) {
 	if !cond {
-		chain.Abort(msg)
+		sdk.Abort(msg)
 	}
 }
 
@@ -95,32 +53,32 @@ func storageKey(gameId string) string {
 }
 
 // Serialize/deserialize
-func saveGame(g Game, chain SDKInterface) {
+func saveGame(g Game) {
 	data, _ := json.Marshal(g)
-	chain.StateSetObject(storageKey(g.ID), string(data))
-	AddIDToIndex(idxGamesCreator+g.Creator.String(), g.ID, chain)
-	AddIDToIndex(idxGamesPlayer+g.Creator.String(), g.ID, chain)
+	sdk.StateSetObject(storageKey(g.ID), string(data))
+	AddIDToIndex(idxGamesCreator+g.Creator.String(), g.ID)
+	AddIDToIndex(idxGamesPlayer+g.Creator.String(), g.ID)
 	if g.Opponent != nil {
-		AddIDToIndex(idxGamesPlayer+g.Opponent.String(), g.ID, chain)
+		AddIDToIndex(idxGamesPlayer+g.Opponent.String(), g.ID)
 	}
 	// TODO: improve this
 	if g.Status == WaitingForPlayer {
-		AddIDToIndex(idxGamesForState+string(WaitingForPlayer), g.ID, chain)
+		AddIDToIndex(idxGamesForState+string(WaitingForPlayer), g.ID)
 	}
 	if g.Status == InProgress {
-		RemoveIDFromIndex(idxGamesForState+string(WaitingForPlayer), g.ID, chain)
-		AddIDToIndex(idxGamesForState+string(InProgress), g.ID, chain)
+		RemoveIDFromIndex(idxGamesForState+string(WaitingForPlayer), g.ID)
+		AddIDToIndex(idxGamesForState+string(InProgress), g.ID)
 	}
 	if g.Status == Finished {
-		RemoveIDFromIndex(idxGamesForState+string(WaitingForPlayer), g.ID, chain)
+		RemoveIDFromIndex(idxGamesForState+string(WaitingForPlayer), g.ID)
 
-		RemoveIDFromIndex(idxGamesForState+string(InProgress), g.ID, chain)
-		AddIDToIndex(idxGamesForState+string(Finished), g.ID, chain)
+		RemoveIDFromIndex(idxGamesForState+string(InProgress), g.ID)
+		AddIDToIndex(idxGamesForState+string(Finished), g.ID)
 	}
 }
 
-func loadGame(id string, chain SDKInterface) (*Game, bool) {
-	val := chain.StateGetObject(storageKey(id))
+func loadGame(id string) (*Game, bool) {
+	val := sdk.StateGetObject(storageKey(id))
 	if val == nil || *val == "" {
 		return nil, false
 	}
@@ -136,14 +94,16 @@ type CreateGameArgs struct {
 }
 
 // Create a new game
-func createGameImpl(payload *string, chain SDKInterface) *string {
+//
+//go:wasmexport createGame
+func CreateGame(payload *string) *string {
 	input := FromJSON[CreateGameArgs](*payload, "create game args")
 
-	sender := chain.GetEnv().Sender.Address
+	sender := sdk.GetEnv().Sender.Address
 	creator := sender
 	// Ensure unique ID
-	_, exists := loadGame(input.GameId, chain)
-	require(!exists, "game already exists", chain)
+	_, exists := loadGame(input.GameId)
+	require(!exists, "game already exists")
 	g := Game{
 		ID:            input.GameId,
 		Creator:       creator,
@@ -158,45 +118,47 @@ func createGameImpl(payload *string, chain SDKInterface) *string {
 	}
 
 	// check if the game is gambling
-	ta := GetFirstTransferAllow(chain.GetEnv().Intents, chain)
+	ta := GetFirstTransferAllow(sdk.GetEnv().Intents)
 
 	if ta != nil {
 		mTaLimit := int64(ta.Limit * 1000)
-		chain.HiveDraw(mTaLimit, ta.Token)
+		sdk.HiveDraw(mTaLimit, ta.Token)
 		g.GameBetAmount = &mTaLimit
 		g.GameAsset = &ta.Token
 	}
 
-	saveGame(g, chain)
-	chain.Log("Game created: " + input.GameId)
+	saveGame(g)
+	sdk.Log("Game created: " + input.GameId)
 	return nil
 }
 
 // Join an existing game
-func joinGameImpl(gameId *string, chain SDKInterface) *string {
-	sender := chain.GetEnv().Sender.Address
+//
+//go:wasmexport joinGame
+func JoinGame(gameId *string) *string {
+	sender := sdk.GetEnv().Sender.Address
 	joiner := sender
 
-	g, exists := loadGame(*gameId, chain)
-	require(exists, "game not found", chain)
-	require(g.Status == WaitingForPlayer, "cannot join", chain)
-	require(joiner != g.Creator, "creator cannot join", chain)
+	g, exists := loadGame(*gameId)
+	require(exists, "game not found")
+	require(g.Status == WaitingForPlayer, "cannot join")
+	require(joiner != g.Creator, "creator cannot join")
 
 	// check if we are gambling
 	if g.GameAsset != nil && *g.GameBetAmount > int64(0) {
-		ta := GetFirstTransferAllow(chain.GetEnv().Intents, chain)
+		ta := GetFirstTransferAllow(sdk.GetEnv().Intents)
 		mTaLimit := int64(ta.Limit * 1000)
 		if ta == nil || ta.Token != *g.GameAsset || mTaLimit != *g.GameBetAmount {
-			chain.Abort("Game needs an equal bet in intents")
+			sdk.Abort("Game needs an equal bet in intents")
 		} else {
-			chain.HiveDraw(mTaLimit, ta.Token)
+			sdk.HiveDraw(mTaLimit, ta.Token)
 		}
 	}
 	g.Opponent = &joiner
 	g.Status = InProgress
-	saveGame(*g, chain)
+	saveGame(*g)
 
-	chain.Log("Player joined game: " + *gameId)
+	sdk.Log("Player joined game: " + *gameId)
 	return nil
 }
 
@@ -206,15 +168,17 @@ type MakeMoveArgs struct {
 }
 
 // Make a move
-func makeMoveImpl(payload *string, chain SDKInterface) *string {
+//
+//go:wasmexport makeMove
+func MakeMove(payload *string) *string {
 	input := FromJSON[MakeMoveArgs](*payload, "create game args")
-	sender := chain.GetEnv().Sender.Address
+	sender := sdk.GetEnv().Sender.Address
 
-	g, exists := loadGame(input.GameId, chain)
-	require(exists, "game not found", chain)
-	require(g.Status == InProgress, "game not in progress", chain)
-	require(input.Pos >= 0 && input.Pos < 9, "invalid position", chain)
-	require(g.Board[input.Pos] == Empty, "cell occupied", chain)
+	g, exists := loadGame(input.GameId)
+	require(exists, "game not found")
+	require(g.Status == InProgress, "game not in progress")
+	require(input.Pos >= 0 && input.Pos < 9, "invalid position")
+	require(g.Board[input.Pos] == Empty, "cell occupied")
 
 	// Determine mark
 	var mark Cell
@@ -224,10 +188,10 @@ func makeMoveImpl(payload *string, chain SDKInterface) *string {
 	case *g.Opponent:
 		mark = O
 	default:
-		chain.Abort("not a player")
+		sdk.Abort("not a player")
 	}
 
-	require(mark == g.Turn, "not your turn", chain)
+	require(mark == g.Turn, "not your turn")
 
 	// Place mark
 	g.Board[input.Pos] = mark
@@ -243,18 +207,18 @@ func makeMoveImpl(payload *string, chain SDKInterface) *string {
 
 		}
 		g.Status = Finished
-		chain.Log("Game " + input.GameId + " won by " + g.Winner.String())
+		sdk.Log("Game " + input.GameId + " won by " + g.Winner.String())
 		if g.GameBetAmount != nil {
 			// send to pot to the winner
-			chain.HiveTransfer(*g.Winner, *g.GameBetAmount*2, *g.GameAsset)
+			sdk.HiveTransfer(*g.Winner, *g.GameBetAmount*2, *g.GameAsset)
 		}
 	} else if g.MovesCount >= 9 { // a came can have max 9 turns
 		g.Status = Finished
-		chain.Log("Game " + input.GameId + " is a draw")
+		sdk.Log("Game " + input.GameId + " is a draw")
 		if g.GameBetAmount != nil {
 			// split the pot
-			chain.HiveTransfer(g.Creator, *g.GameBetAmount, *g.GameAsset)
-			chain.HiveTransfer(*g.Opponent, *g.GameBetAmount, *g.GameAsset)
+			sdk.HiveTransfer(g.Creator, *g.GameBetAmount, *g.GameAsset)
+			sdk.HiveTransfer(*g.Opponent, *g.GameBetAmount, *g.GameAsset)
 		}
 	} else {
 
@@ -265,73 +229,77 @@ func makeMoveImpl(payload *string, chain SDKInterface) *string {
 			g.Turn = X
 		}
 	}
-	saveGame(*g, chain)
+	saveGame(*g)
 	return nil
 }
 
 // Resign
-func resignImpl(gameId *string, chain SDKInterface) *string {
-	sender := chain.GetEnv().Sender.Address
+//
+//go:wasmexport resign
+func Resign(gameId *string) *string {
+	sender := sdk.GetEnv().Sender.Address
 
-	g, exists := loadGame(*gameId, chain)
-	require(exists, "game not found", chain)
-	require(g.Status != Finished, "game is already finished", chain)
+	g, exists := loadGame(*gameId)
+	require(exists, "game not found")
+	require(g.Status != Finished, "game is already finished")
 	if g.Opponent == nil {
 		if g.GameBetAmount != nil {
 			// send funds back to creator
-			chain.HiveTransfer(g.Creator, *g.GameBetAmount, *g.GameAsset)
+			sdk.HiveTransfer(g.Creator, *g.GameBetAmount, *g.GameAsset)
 		}
 	} else {
 		switch sender {
 		case g.Creator:
 			g.Winner = g.Opponent
 			if g.GameBetAmount != nil {
-				chain.HiveTransfer(*g.Opponent, *g.GameBetAmount*2, *g.GameAsset)
+				sdk.HiveTransfer(*g.Opponent, *g.GameBetAmount*2, *g.GameAsset)
 			}
 
 		case *g.Opponent:
 			g.Winner = &g.Creator
 			if g.GameBetAmount != nil {
-				chain.HiveTransfer(g.Creator, *g.GameBetAmount*2, *g.GameAsset)
+				sdk.HiveTransfer(g.Creator, *g.GameBetAmount*2, *g.GameAsset)
 			}
 		default:
-			chain.Abort("not a player")
+			sdk.Abort("not a player")
 		}
 	}
 
 	g.Status = Finished
-	saveGame(*g, chain)
-	chain.Log("Player resigned: " + string(sender))
+	saveGame(*g)
+	sdk.Log("Player resigned: " + string(sender))
 	return nil
 }
 
 // ---------- Queries ----------
 
-func getGameImpl(gameId *string, chain SDKInterface) *string {
-	g, exists := loadGame(*gameId, chain)
-	require(exists, "game not found", chain)
+//go:wasmexport getGame
+func GetGame(gameId *string) *string {
+	g, exists := loadGame(*gameId)
+	require(exists, "game not found")
 	data, _ := json.Marshal(g)
 	s := string(data)
 	return &s
 }
 
-func getGameForStateImpl(gameState *int32, chain SDKInterface) *string {
+//go:wasmexport getGamesForGameState
+func GetGamesForState(gameState *int32) *string {
 
 	ids := make([]string, 0)
 	switch *gameState {
 	case WaitingForPlayer.Value(), InProgress.Value(), Finished.Value():
-		ids = GetIDsFromIndex(idxGamesForState+string(*gameState), chain)
+		ids = GetIDsFromIndex(idxGamesForState + string(*gameState))
 	default:
-		chain.Abort("unknown game state")
+		sdk.Abort("unknown game state")
 	}
-	return loadGamesForIds(ids, chain)
+	return loadGamesForIds(ids)
 }
 
-func loadGamesForIds(ids []string, chain SDKInterface) *string {
+func loadGamesForIds(ids []string) *string {
 	games := make([]Game, 0, len(ids))
 	for _, v := range ids {
-		g, exists := loadGame(v, chain)
-		require(exists, "game not found", chain)
+		g, exists := loadGame(v)
+		require(exists, "game not found")
 		games = append(games, *g)
 	}
 
@@ -340,21 +308,24 @@ func loadGamesForIds(ids []string, chain SDKInterface) *string {
 	return &s
 }
 
-func getGameForCreatorImpl(address *string, chain SDKInterface) *string {
+//go:wasmexport getGameForCreator
+func GetGameForCreator(address *string) *string {
 	if *address == "" {
-		chain.Abort("address is mandatory")
+		sdk.Abort("address is mandatory")
 	}
 	ids := make([]string, 0)
-	ids = GetIDsFromIndex(idxGamesCreator+*address, chain)
-	return loadGamesForIds(ids, chain)
+	ids = GetIDsFromIndex(idxGamesCreator + *address)
+	return loadGamesForIds(ids)
 }
-func getGameForPlayerImpl(address *string, chain SDKInterface) *string {
+
+//go:wasmexport getGameForPlayer
+func GetGameForPlayer(address *string) *string {
 	if *address == "" {
-		chain.Abort("address is mandatory")
+		sdk.Abort("address is mandatory")
 	}
 	ids := make([]string, 0)
-	ids = GetIDsFromIndex(idxGamesPlayer+*address, chain)
-	return loadGamesForIds(ids, chain)
+	ids = GetIDsFromIndex(idxGamesPlayer + *address)
+	return loadGamesForIds(ids)
 }
 
 // ---------- Pure logic ----------

@@ -47,18 +47,18 @@ func isValidAsset(token string) bool {
 }
 
 // Helper function to get the first transfer.allow intent (if exists)
-func GetFirstTransferAllow(intents []sdk.Intent, chain SDKInterface) *TransferAllow {
+func GetFirstTransferAllow(intents []sdk.Intent) *TransferAllow {
 	for _, intent := range intents {
 		if intent.Type == "transfer.allow" {
 			token := intent.Args["token"]
 			// if we have an transfer.allow intent but the asset is not valid
 			if !isValidAsset(token) {
-				chain.Abort("invalid intent token")
+				sdk.Abort("invalid intent token")
 			}
 			limitStr := intent.Args["limit"]
 			limit, err := strconv.ParseFloat(limitStr, 64)
 			if err != nil {
-				chain.Abort("invalid intent limit")
+				sdk.Abort("invalid intent limit")
 			}
 			ta := &TransferAllow{
 				Limit: limit,
