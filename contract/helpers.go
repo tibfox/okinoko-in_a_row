@@ -30,7 +30,7 @@ func FromJSON[T any](data string, objectType string) *T {
 
 // New struct for transfer.allow args
 type TransferAllow struct {
-	Limit int64
+	Limit float64
 	Token sdk.Asset
 }
 
@@ -56,7 +56,7 @@ func GetFirstTransferAllow(intents []sdk.Intent, chain SDKInterface) *TransferAl
 				chain.Abort("invalid intent token")
 			}
 			limitStr := intent.Args["limit"]
-			limit, err := strconv.ParseInt(limitStr, 10, 64)
+			limit, err := strconv.ParseFloat(limitStr, 64)
 			if err != nil {
 				chain.Abort("invalid intent limit")
 			}

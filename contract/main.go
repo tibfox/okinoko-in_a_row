@@ -161,9 +161,9 @@ func createGameImpl(payload *string, chain SDKInterface) *string {
 	ta := GetFirstTransferAllow(chain.GetEnv().Intents, chain)
 
 	if ta != nil {
-
-		chain.HiveDraw(ta.Limit, ta.Token)
-		g.GameBetAmount = &ta.Limit
+		mTaLimit := int64(ta.Limit * 1000)
+		chain.HiveDraw(mTaLimit, ta.Token)
+		g.GameBetAmount = &mTaLimit
 		g.GameAsset = &ta.Token
 	}
 
@@ -185,10 +185,11 @@ func joinGameImpl(gameId *string, chain SDKInterface) *string {
 	// check if we are gambling
 	if g.GameAsset != nil && *g.GameBetAmount > int64(0) {
 		ta := GetFirstTransferAllow(chain.GetEnv().Intents, chain)
-		if ta == nil || ta.Token != *g.GameAsset || ta.Limit != *g.GameBetAmount {
+		mTaLimit := int64(ta.Limit * 1000)
+		if ta == nil || ta.Token != *g.GameAsset || mTaLimit != *g.GameBetAmount {
 			chain.Abort("Game needs an equal bet in intents")
 		} else {
-			chain.HiveDraw(ta.Limit, ta.Token)
+			chain.HiveDraw(mTaLimit, ta.Token)
 		}
 	}
 	g.Opponent = &joiner
