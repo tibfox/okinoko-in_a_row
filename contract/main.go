@@ -78,7 +78,7 @@ func GetGameForPlayer(address *string) *string {
 }
 
 //go:wasmexport getGameForGameState
-func GetGameForState(state int32) *string {
+func GetGameForState(state *int32) *string {
 	return getGameForStateImpl(state, RealSDK{})
 }
 
@@ -315,12 +315,12 @@ func getGameImpl(gameId *string, chain SDKInterface) *string {
 	return &s
 }
 
-func getGameForStateImpl(gameState int32, chain SDKInterface) *string {
+func getGameForStateImpl(gameState *int32, chain SDKInterface) *string {
 
 	ids := make([]string, 0)
-	switch gameState {
+	switch *gameState {
 	case WaitingForPlayer.Value(), InProgress.Value(), Finished.Value():
-		ids = GetIDsFromIndex(idxGamesForState+string(gameState), chain)
+		ids = GetIDsFromIndex(idxGamesForState+string(*gameState), chain)
 	default:
 		chain.Abort("unknown game state")
 	}

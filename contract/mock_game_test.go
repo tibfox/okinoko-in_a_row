@@ -267,7 +267,7 @@ func TestGetGameForState(t *testing.T) {
 	createGameImpl(&payload, chain)
 
 	stateId := int32(0)
-	resp := getGameForStateImpl(stateId, chain)
+	resp := getGameForStateImpl(&stateId, chain)
 	games := FromJSON[[]Game](*resp, "games")
 	if len(*games) != 1 {
 		t.Errorf("expected 1 game")
@@ -279,8 +279,9 @@ func TestGetGameForAllStateS(t *testing.T) {
 	chain := NewFakeSDK(playerA, "tx10")
 	payload := `{"gameId":"g10"}`
 	createGameImpl(&payload, chain)
+	gameStateId0 := int32(0)
 
-	resp := getGameForStateImpl(int32(0), chain)
+	resp := getGameForStateImpl(&gameStateId0, chain)
 	games := FromJSON[[]Game](*resp, "games")
 	if len(*games) != 1 {
 		t.Errorf("expected 1 game in state 0")
@@ -292,7 +293,8 @@ func TestGetGameForAllStateS(t *testing.T) {
 	chain.env.Caller = sdk.Address(playerB)
 	chain.env.Sender.Address = sdk.Address(playerB)
 	joinGameImpl(&gameId, chain)
-	resp = getGameForStateImpl(int32(1), chain)
+	gameStateId1 := int32(1)
+	resp = getGameForStateImpl(&gameStateId1, chain)
 	games = FromJSON[[]Game](*resp, "games")
 	if len(*games) != 1 {
 		t.Errorf("expected 1 game in state 1")
@@ -300,7 +302,8 @@ func TestGetGameForAllStateS(t *testing.T) {
 
 	// resign
 	resignImpl(&gameId, chain)
-	resp = getGameForStateImpl(int32(2), chain)
+	gameStateId2 := int32(2)
+	resp = getGameForStateImpl(&gameStateId2, chain)
 	games = FromJSON[[]Game](*resp, "games")
 	if len(*games) != 1 {
 		t.Errorf("expected 1 game in state 2")
