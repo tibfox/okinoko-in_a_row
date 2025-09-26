@@ -1,127 +1,133 @@
-# Tic-Tac-Toe VSC Smart Contract 🎮
+# Multi-Game Smart Contract (Tic-Tac-Toe, Connect Four, Gomoku)
 
-*A game contract for the [vsc-eco](https://github.com/vsc-eco) ecosystem*
-
-This contract brings **Tic-Tac-Toe** (a.k.a. “X and O”) onto the VSC blockchain.
-It allows two players to start a game, make moves on-chain, wager assets, and claim winnings automatically.
+This contract allows players to create, join, and play **Tic-Tac-Toe**, **Connect Four**, and **Gomoku** games on-chain. Bets can optionally be attached, and the contract handles moves, wins, draws, and payouts automatically.
 
 ---
 
-## 🔑 Key Features
+## Game Types
 
-* **Create Games** — anyone can start a new Tic-Tac-Toe match with a unique game ID.
-* **Join Games** — other players can join open matches.
-* **On-Chain Gameplay** — moves are validated and stored on the blockchain.
-* **Resign** — players can resign at any point, awarding the win to the opponent.
-* **Automatic Payouts** — when bets are included, the contract distributes winnings to the winner (or splits in case of a draw).
-* **Game Queries** — fetch games by ID, creator, player, or status (waiting, in progress, finished).
+| Game Type    | ID | Board Size | Winning Line Length |
+| ------------ | -- | ---------- | ------------------- |
+| Tic-Tac-Toe  | 1  | 3×3        | 3                   |
+| Connect Four | 2  | 6×7        | 4                   |
+| Gomoku       | 3  | 15×15      | 5                   |
 
 ---
 
-## 🕹️ How to Play
+## Quick Start
 
 ### 1. Create a Game
 
-Call the contract’s `createGame` function with a chosen `gameId`.
-Optionally, attach a bet by including a transfer intent.
+Call `createGame` with a **name** and **game type**. Optionally attach a bet via transaction intents.
 
-Example payload:
+**Example Payload:**
 
 ```json
 {
-  "gameId": "game123"
+  "name": "Fun Match",
+  "type": 1
 }
 ```
 
-If a bet is included, the contract locks the funds until the game is resolved.
+**Returns:** `nil`. Event `GameCreated` is emitted with the new game ID.
 
 ---
 
 ### 2. Join a Game
 
-Another player joins with `joinGame`.
+Call `joinGame(gameId)` to join a waiting game.
 
-* If the game has a bet, the joiner must provide the same token and amount.
-* The game then moves to **In Progress**.
+* Creator cannot join their own game.
+* Bets must match exactly if one exists.
 
 ---
 
-### 3. Make Moves
+### 3. Make a Move
 
-Use `makeMove` to place your mark (`X` for the creator, `O` for the joiner).
-Payload format:
+Call `makeMove(gameId, row, col)` to place your mark.
+
+* **Tic-Tac-Toe / Gomoku:** specify row & column.
+* **Connect Four:** specify column; the disc drops to the lowest empty row.
+
+**Rules enforced:**
+
+* Only the current player can make a move.
+* Cell must be empty (or column must have space for Connect Four).
+
+---
+
+### 4. Game Completion
+
+* Contract automatically checks for a win or draw after each move.
+* Payouts occur automatically:
+
+  * Winner receives the pot.
+  * Draw splits the pot equally.
+
+---
+
+### 5. Timeout & Resign
+
+* **Timeout:** If a player doesn’t move for 7 days, the opponent can claim a win by calling `claimTimeout(gameId)`.
+* **Resign:** A player can forfeit by calling `resign(gameId)`; the other player wins automatically.
+
+---
+
+### 6. Check Game State
+
+Call `getGame(gameId)` to retrieve the full game state:
+
+**Example Response:**
 
 ```json
 {
-  "gameId": "game123",
-  "pos": 4
+  "id": 1,
+  "type": 1,
+  "typeName": "TicTacToe",
+  "name": "Fun Match",
+  "creator": "addr1",
+  "opponent": "addr2",
+  "board": [0,1,0,2,0,0,0,0,0],
+  "rows": 3,
+  "cols": 3,
+  "turn": 1,
+  "moves_count": 3,
+  "status": 1,
+  "winner": null,
+  "gameAsset": null,
+  "gameBetAmount": null,
+  "lastMoveAt": "2025-09-26T20:45:00Z"
 }
 ```
 
-* `pos` is a number from 0–8 representing the board (left to right, top to bottom).
-* The contract checks turn order, valid moves, and winning conditions.
+* `board` stores the game cells as 2-bit packed values (0 = empty, 1 = X, 2 = O).
+* `turn` indicates the next player (`1 = X`, `2 = O`).
+* `status` = 0 (waiting), 1 (in progress), 2 (finished).
 
 ---
 
-### 4. Resign
+### 7. Bets
 
-At any time, a player can resign with `resign`.
-
-* If the creator resigns → the opponent wins.
-* If the opponent resigns → the creator wins.
-* Locked bets are transferred accordingly.
+* Supported via `sdk.Asset` and amount in `GameBetAmount`.
+* Automatically handled for winner or split in case of draw.
 
 ---
 
-### 5. Winning and Draws
+### 8. Events
 
-* First player to get **3 in a row** wins.
-* If all 9 cells are filled with no winner → the game ends in a **draw**.
-* Payout logic:
+* **GameCreated(gameId, creator)**
+* **GameJoined(gameId, joiner)**
+* **GameMoveMade(gameId, player, position)**
+* **GameWon(gameId, winner)**
+* **GameDraw(gameId)**
+* **GameResigned(gameId, player)**
 
-  * Winner takes all (double the bet).
-  * In a draw, both players get their stake back.
-
----
-
-## 📊 Querying Games
-
-You can fetch games in different ways:
-
-* `getGame(gameId)` → get the full game state.
-* `getGameForCreator(address)` → all games created by an address.
-* `getGameForPlayer(address)` → all games played by an address.
-* `getGameForGameState(state)` → list games by status:
-
-  * `0 = WaitingForPlayer`
-  * `1 = InProgress`
-  * `2 = Finished`
+These events can be used to track game progress off-chain.
 
 ---
 
-## 🧩 Game State Model
+### Notes
 
-Each game tracks:
-
-* **ID** — unique string identifier.
-* **Creator / Opponent** — player addresses.
-* **Board** — 9-cell array (`X`, `O`, or empty).
-* **Turn** — which player goes next.
-* **Status** — waiting, in progress, or finished.
-* **Winner** — set when the game ends.
-* **GameAsset / GameBetAmount** — optional betting token and amount.
-
----
-
-## Example Flow
-
-1. Player A creates `game42` with a 100-token bet.
-2. Player B joins `game42`, also staking 100 tokens.
-3. Players alternate moves until Player A wins.
-4. Contract transfers 200 tokens to Player A automatically.
-5. Game status changes to **Finished**.
-
----
-
-⚡ Have fun playing Tic-Tac-Toe on-chain, with fairness and trust guaranteed by the contract!
-
+* Each game board is stored **efficiently** as a `[]byte` with 2 bits per cell.
+* Maximum board size: 15×15 for Gomoku.
+* Supports multiple games simultaneously.

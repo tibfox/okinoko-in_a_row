@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
-	"strings"
+	"time"
 	"vsc_tictactoe/sdk"
 )
 
@@ -13,19 +13,34 @@ import (
 func ToJSON[T any](v T, objectType string) string {
 	b, err := json.Marshal(v)
 	if err != nil {
-		sdk.Abort(fmt.Sprintf("failed to marshal %s\nInput data:%+v\nError: %v:", objectType, v, err))
+		sdk.Abort("failed to marshal " + objectType)
 	}
 	return string(b)
 }
 
 func FromJSON[T any](data string, objectType string) *T {
-	data = strings.TrimSpace(data)
+	// data = strings.TrimSpace(data)
 	var v T
 	if err := json.Unmarshal([]byte(data), &v); err != nil {
-		sdk.Abort(fmt.Sprintf(
-			"failed to unmarshal %s\nInput data:%s\nError: %v:", objectType, data, err))
+		sdk.Abort(
+			fmt.Sprintf("failed to unmarshal %s \ninput: %s\nerror: %v", objectType, data, err.Error()))
 	}
 	return &v
+}
+
+func StringToUInt64(ptr *string) uint64 {
+	if ptr == nil {
+		sdk.Abort("input is empty")
+	}
+	val, err := strconv.ParseUint(*ptr, 10, 64) // base 10, 64-bit
+	if err != nil {
+		sdk.Abort(fmt.Sprintf("failed to parse '%s' to uint64: %w", *ptr, err))
+	}
+	return val
+}
+
+func UInt64ToString(val uint64) string {
+	return strconv.FormatUint(val, 10)
 }
 
 // New struct for transfer.allow args
@@ -68,4 +83,40 @@ func GetFirstTransferAllow(intents []sdk.Intent) *TransferAllow {
 		}
 	}
 	return nil
+}
+
+func getGameCount() uint64 {
+	ptr := sdk.StateGetObject("g:count")
+	if ptr == nil || *ptr == "" {
+		return 0
+	}
+	return StringToUInt64(ptr)
+}
+func setGameCount(newCount uint64) {
+	sdk.StateSetObject("g:count", UInt64ToString(newCount))
+}
+
+// ---------- Timestamp parsing ----------
+
+// parseTimestamp parses "YYYY-MM-DDTHH:MM:SS" as UTC
+func parseTimestamp(ts string) time.Time {
+	t, err := time.ParseInLocation("2006-01-02T15:04:05", ts, time.UTC)
+	if err != nil {
+		sdk.Abort("invalid timestamp: " + ts)
+	}
+	return t
+}
+
+// currentTimestamp returns current block timestamp as string
+func currentTimestampString() string {
+	ts := sdk.GetEnvKey("block.timestamp")
+	if ts == nil {
+		sdk.Abort("block.timestamp not found")
+	}
+	return *ts
+}
+
+// currentTimestamp returns current block timestamp as time.Time (UTC)
+func currentTimestamp() time.Time {
+	return parseTimestamp(currentTimestampString())
 }

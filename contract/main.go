@@ -2,12 +2,48 @@ package main
 
 import (
 	"encoding/json"
+	"time"
 	"vsc_tictactoe/sdk"
 )
 
-// ---------- Data types ----------
+// ---------- Game Type Definitions ----------
 
-type Cell int32
+// GameType enumerates the supported games
+type GameType uint8
+
+const (
+	TicTacToe   GameType = 1
+	ConnectFour GameType = 2
+	Gomoku      GameType = 3
+)
+
+// String returns a human-readable game type
+func (gt GameType) String() string {
+	switch gt {
+	case TicTacToe:
+		return "TicTacToe"
+	case ConnectFour:
+		return "ConnectFour"
+	case Gomoku:
+		return "Gomoku"
+	default:
+		return "Unknown"
+	}
+}
+
+// Board dimensions and winning lengths per game
+const (
+	TTTRows, TTTCols       = 3, 3
+	C4Rows, C4Cols         = 6, 7
+	GomokuRows, GomokuCols = 15, 15
+
+	TTTWin    = 3
+	C4Win     = 4
+	GomokuWin = 5
+)
+
+// Cell represents a single board position: empty, X, or O
+type Cell uint8
 
 const (
 	Empty Cell = 0
@@ -15,7 +51,8 @@ const (
 	O     Cell = 2
 )
 
-type GameStatus int32
+// GameStatus enumerates the state of a game
+type GameStatus uint8
 
 const (
 	WaitingForPlayer GameStatus = 0
@@ -23,324 +60,385 @@ const (
 	Finished         GameStatus = 2
 )
 
-func (s GameStatus) Value() int32 {
-	return int32(s)
+// String returns human-readable game status
+func (s GameStatus) String() string {
+	switch s {
+	case WaitingForPlayer:
+		return "WaitingForPlayer"
+	case InProgress:
+		return "InProgress"
+	case Finished:
+		return "Finished"
+	default:
+		return "Unknown"
+	}
 }
 
+// ---------- Game Structure ----------
+
+// Game represents a single game instance
 type Game struct {
-	ID            string       `json:"id"`
-	Creator       sdk.Address  `json:"creator"`
-	Opponent      *sdk.Address `json:"opponent"`
-	Board         [9]Cell      `json:"board"`
-	Turn          Cell         `json:"turn"`
-	MovesCount    int          `json:"moves_count"`
-	Status        GameStatus   `json:"status"`
-	Winner        *sdk.Address `json:"winner"`
-	GameAsset     *sdk.Asset   `json:"gameAsset"`
-	GameBetAmount *int64       `json:"gameBetAmount"`
+	ID            uint64       `json:"id"`
+	Type          GameType     `json:"type"`
+	TypeName      string       `json:"typeName"`      // human-readable game type
+	Name          string       `json:"name"`          // game name set by creator
+	Creator       sdk.Address  `json:"creator"`       // creator's blockchain address
+	Opponent      *sdk.Address `json:"opponent"`      // optional opponent address
+	Board         []byte       `json:"board"`         // compact 2-bit-per-cell board
+	Rows          int          `json:"rows"`          // board rows
+	Cols          int          `json:"cols"`          // board columns
+	Turn          Cell         `json:"turn"`          // whose turn it is (X or O)
+	MovesCount    uint16       `json:"moves_count"`   // total moves made
+	Status        GameStatus   `json:"status"`        // current game status
+	Winner        *sdk.Address `json:"winner"`        // winner's address, if finished
+	GameAsset     *sdk.Asset   `json:"gameAsset"`     // optional betting asset
+	GameBetAmount *int64       `json:"gameBetAmount"` // optional bet amount
+	LastMoveAt    string       `json:"lastMoveAt"`    // last move timestamp (string)
 }
 
-// ---------- Helpers ----------
+// ---------- Utility Functions ----------
 
+// require aborts execution if the condition is false
 func require(cond bool, msg string) {
 	if !cond {
 		sdk.Abort(msg)
 	}
 }
 
-func storageKey(gameId string) string {
-	return "game:" + gameId
-}
+// gameKey returns the state key for a given game ID
+func gameKey(gameId uint64) string { return "g:" + UInt64ToString(gameId) }
 
-// Serialize/deserialize
-func saveGame(g Game) {
+// saveGame serializes and saves a game to blockchain state
+func saveGame(g *Game) {
 	data, _ := json.Marshal(g)
-	sdk.StateSetObject(storageKey(g.ID), string(data))
-	AddIDToIndex(idxGamesCreator+g.Creator.String(), g.ID)
-	AddIDToIndex(idxGamesPlayer+g.Creator.String(), g.ID)
-	if g.Opponent != nil {
-		AddIDToIndex(idxGamesPlayer+g.Opponent.String(), g.ID)
-	}
-	// TODO: improve this
-	if g.Status == WaitingForPlayer {
-		AddIDToIndex(idxGamesForState+string(WaitingForPlayer), g.ID)
-	}
-	if g.Status == InProgress {
-		RemoveIDFromIndex(idxGamesForState+string(WaitingForPlayer), g.ID)
-		AddIDToIndex(idxGamesForState+string(InProgress), g.ID)
-	}
-	if g.Status == Finished {
-		RemoveIDFromIndex(idxGamesForState+string(WaitingForPlayer), g.ID)
-
-		RemoveIDFromIndex(idxGamesForState+string(InProgress), g.ID)
-		AddIDToIndex(idxGamesForState+string(Finished), g.ID)
-	}
+	sdk.StateSetObject(gameKey(g.ID), string(data))
 }
 
-func loadGame(id string) (*Game, bool) {
-	val := sdk.StateGetObject(storageKey(id))
+// loadGame retrieves and deserializes a game from blockchain state
+func loadGame(id uint64) *Game {
+	val := sdk.StateGetObject(gameKey(id))
 	if val == nil || *val == "" {
-		return nil, false
+		sdk.Abort("game not found")
 	}
-	g := FromJSON[Game](*val, "game")
-
-	return g, true
+	return FromJSON[Game](*val, "game")
 }
 
-// ---------- Core logic ----------
+// ---------- Board Initialization & Access ----------
+
+// initBoard returns a newly initialized empty board and its dimensions
+func initBoard(gt GameType) ([]byte, int, int) {
+	var rows, cols int
+	switch gt {
+	case TicTacToe:
+		rows, cols = TTTRows, TTTCols
+	case ConnectFour:
+		rows, cols = C4Rows, C4Cols
+	case Gomoku:
+		rows, cols = GomokuRows, GomokuCols
+	default:
+		sdk.Abort("invalid game type")
+	}
+	size := (rows*cols + 3) / 4 // 2 bits per cell → 4 cells per byte
+	return make([]byte, size), rows, cols
+}
+
+// getCell returns the Cell value at a given row/col from a packed board
+func getCell(board []byte, row, col, cols int) Cell {
+	idx := row*cols + col
+	byteIdx, bitShift := idx/4, (idx%4)*2
+	return Cell((board[byteIdx] >> bitShift) & 0x03)
+}
+
+// setCell sets a Cell value at a given row/col on a packed board
+func setCell(board []byte, row, col, cols int, val Cell) {
+	idx := row*cols + col
+	byteIdx, bitShift := idx/4, (idx%4)*2
+	board[byteIdx] = (board[byteIdx] & ^(0x03 << bitShift)) | (byte(val) << bitShift)
+}
+
+// ---------- Game Lifecycle: Create / Join ----------
 
 type CreateGameArgs struct {
-	GameId string `json:"gameId"`
+	Name string   `json:"name"`
+	Type GameType `json:"type"`
 }
 
-// Create a new game
-//
-//go:wasmexport createGame
+// CreateGame initializes a new game and stores it in state
+// @wasmexport
 func CreateGame(payload *string) *string {
 	input := FromJSON[CreateGameArgs](*payload, "create game args")
-
 	sender := sdk.GetEnv().Sender.Address
-	creator := sender
-	// Ensure unique ID
-	_, exists := loadGame(input.GameId)
-	require(!exists, "game already exists")
-	g := Game{
-		ID:            input.GameId,
-		Creator:       creator,
-		Opponent:      nil,
-		Board:         [9]Cell{},
-		Turn:          X,
-		MovesCount:    0,
-		Status:        WaitingForPlayer,
-		Winner:        nil,
-		GameAsset:     nil,
-		GameBetAmount: nil,
+	gameId := getGameCount()
+
+	board, rows, cols := initBoard(input.Type)
+	g := &Game{
+		ID: gameId, Type: input.Type, TypeName: input.Type.String(),
+		Name: input.Name, Creator: sender,
+		Board: board, Rows: rows, Cols: cols,
+		Turn: X, MovesCount: 0, Status: WaitingForPlayer,
+		LastMoveAt: currentTimestampString(),
 	}
 
-	// check if the game is gambling
+	// Handle optional betting
 	ta := GetFirstTransferAllow(sdk.GetEnv().Intents)
-
 	if ta != nil {
-		mTaLimit := int64(ta.Limit * 1000)
-		sdk.HiveDraw(mTaLimit, ta.Token)
-		g.GameBetAmount = &mTaLimit
+		amt := int64(ta.Limit * 1000)
+		sdk.HiveDraw(amt, ta.Token)
 		g.GameAsset = &ta.Token
+		g.GameBetAmount = &amt
 	}
 
 	saveGame(g)
-	sdk.Log("Game created: " + input.GameId)
+	EmitGameCreated(g.ID, sender.String())
 	return nil
 }
 
-// Join an existing game
-//
-//go:wasmexport joinGame
-func JoinGame(gameId *string) *string {
+// JoinGame lets a second player join a waiting game
+// @wasmexport
+func JoinGame(gameId *uint64) *string {
 	sender := sdk.GetEnv().Sender.Address
-	joiner := sender
-
-	g, exists := loadGame(*gameId)
-	require(exists, "game not found")
+	g := loadGame(*gameId)
 	require(g.Status == WaitingForPlayer, "cannot join")
-	require(joiner != g.Creator, "creator cannot join")
+	require(sender != g.Creator, "creator cannot join")
 
-	// check if we are gambling
-	if g.GameAsset != nil && *g.GameBetAmount > int64(0) {
+	// Handle optional betting
+	if g.GameAsset != nil && *g.GameBetAmount > 0 {
 		ta := GetFirstTransferAllow(sdk.GetEnv().Intents)
-		mTaLimit := int64(ta.Limit * 1000)
-		if ta == nil || ta.Token != *g.GameAsset || mTaLimit != *g.GameBetAmount {
-			sdk.Abort("Game needs an equal bet in intents")
-		} else {
-			sdk.HiveDraw(mTaLimit, ta.Token)
-		}
+		require(ta != nil, "intent missing")
+		amt := int64(ta.Limit * 1000)
+		require(ta.Token == *g.GameAsset && amt == *g.GameBetAmount, "game needs equal bet")
+		sdk.HiveDraw(amt, ta.Token)
 	}
-	g.Opponent = &joiner
-	g.Status = InProgress
-	saveGame(*g)
 
-	sdk.Log("Player joined game: " + *gameId)
+	g.Opponent = &sender
+	g.Status = InProgress
+	saveGame(g)
+	EmitGameJoined(g.ID, sender.String())
 	return nil
 }
+
+// ---------- Move Handling ----------
 
 type MakeMoveArgs struct {
-	GameId string `json:"gameId"`
-	Pos    int    `json:"pos"`
+	GameId uint64 `json:"gameId"`
+	Row    uint8  `json:"row"`
+	Col    uint8  `json:"col"`
 }
 
-// Make a move
-//
-//go:wasmexport makeMove
+// MakeMove executes a player's move and checks for winner/draw
+// @wasmexport
 func MakeMove(payload *string) *string {
-	input := FromJSON[MakeMoveArgs](*payload, "create game args")
+	input := FromJSON[MakeMoveArgs](*payload, "make move")
 	sender := sdk.GetEnv().Sender.Address
+	g := loadGame(input.GameId)
 
-	g, exists := loadGame(input.GameId)
-	require(exists, "game not found")
 	require(g.Status == InProgress, "game not in progress")
-	require(input.Pos >= 0 && input.Pos < 9, "invalid position")
-	require(g.Board[input.Pos] == Empty, "cell occupied")
+	require(isPlayer(g, sender), "not a player")
+	require(int(input.Row) < g.Rows && int(input.Col) < g.Cols, "invalid move")
 
-	// Determine mark
+	// Determine mark for player
 	var mark Cell
-	switch sender {
-	case g.Creator:
+	if sender == g.Creator {
 		mark = X
-	case *g.Opponent:
+	} else {
 		mark = O
-	default:
-		sdk.Abort("not a player")
 	}
-
 	require(mark == g.Turn, "not your turn")
 
-	// Place mark
-	g.Board[input.Pos] = mark
-	g.MovesCount++
-
-	// Check winner
-	if winner := checkWinner(g.Board); winner != Empty {
-		switch winner {
-		case X:
-			g.Winner = &g.Creator
-		case O:
-			g.Winner = g.Opponent
-
-		}
-		g.Status = Finished
-		sdk.Log("Game " + input.GameId + " won by " + g.Winner.String())
-		if g.GameBetAmount != nil {
-			// send to pot to the winner
-			sdk.HiveTransfer(*g.Winner, *g.GameBetAmount*2, *g.GameAsset)
-		}
-	} else if g.MovesCount >= 9 { // a came can have max 9 turns
-		g.Status = Finished
-		sdk.Log("Game " + input.GameId + " is a draw")
-		if g.GameBetAmount != nil {
-			// split the pot
-			sdk.HiveTransfer(g.Creator, *g.GameBetAmount, *g.GameAsset)
-			sdk.HiveTransfer(*g.Opponent, *g.GameBetAmount, *g.GameAsset)
-		}
-	} else {
-
-		switch g.Turn {
-		case X:
-			g.Turn = O
-		case O:
-			g.Turn = X
-		}
+	// Apply move depending on game type
+	switch g.Type {
+	case TicTacToe, Gomoku:
+		require(getCell(g.Board, int(input.Row), int(input.Col), g.Cols) == Empty, "cell occupied")
+		setCell(g.Board, int(input.Row), int(input.Col), g.Cols, mark)
+	case ConnectFour:
+		row := dropDisc(g, int(input.Col), mark)
+		require(row >= 0, "column full")
+		input.Row = uint8(row)
+	default:
+		sdk.Abort("invalid game type")
 	}
-	saveGame(*g)
+
+	g.MovesCount++
+	g.Turn = 3 - g.Turn
+	g.LastMoveAt = currentTimestampString()
+
+	// Winner or draw check
+	if checkWinner(g, int(input.Row), int(input.Col)) {
+		if mark == X {
+			g.Winner = &g.Creator
+		} else {
+			g.Winner = g.Opponent
+		}
+		g.Status = Finished
+		if g.GameBetAmount != nil {
+			transferPot(g, *g.Winner)
+		}
+		EmitGameWon(g.ID, g.Winner.String())
+	} else if g.MovesCount >= uint16(g.Rows*g.Cols) {
+		g.Status = Finished
+		if g.GameBetAmount != nil {
+			splitPot(g)
+		}
+		EmitGameDraw(g.ID)
+	}
+
+	saveGame(g)
 	return nil
 }
 
-// Resign
-//
-//go:wasmexport resign
-func Resign(gameId *string) *string {
-	sender := sdk.GetEnv().Sender.Address
+// ---------- Connect Four Helper ----------
 
-	g, exists := loadGame(*gameId)
-	require(exists, "game not found")
+// dropDisc places a disc in the chosen column (Connect Four only)
+func dropDisc(g *Game, col int, mark Cell) int {
+	for r := g.Rows - 1; r >= 0; r-- {
+		if getCell(g.Board, r, col, g.Cols) == Empty {
+			setCell(g.Board, r, col, g.Cols, mark)
+			return r
+		}
+	}
+	return -1
+}
+
+// ---------- Winner Checking ----------
+
+// checkWinner checks if the last move caused a win
+func checkWinner(g *Game, row, col int) bool {
+	var winLen int
+	switch g.Type {
+	case TicTacToe:
+		winLen = TTTWin
+	case ConnectFour:
+		winLen = C4Win
+	case Gomoku:
+		winLen = GomokuWin
+	default:
+		sdk.Abort("invalid game type")
+	}
+	return checkLineWin(g, row, col, winLen)
+}
+
+// checkLineWin scans lines in 4 directions for a win
+func checkLineWin(g *Game, row, col, winLen int) bool {
+	mark := getCell(g.Board, row, col, g.Cols)
+	if mark == Empty {
+		return false
+	}
+	dirs := [][2]int{{1, 0}, {0, 1}, {1, 1}, {1, -1}} // vertical, horizontal, diagonal
+	for _, d := range dirs {
+		count := 1
+		r, c := row+d[0], col+d[1]
+		for r >= 0 && r < g.Rows && c >= 0 && c < g.Cols && getCell(g.Board, r, c, g.Cols) == mark {
+			count++
+			r += d[0]
+			c += d[1]
+		}
+		r, c = row-d[0], col-d[1]
+		for r >= 0 && r < g.Rows && c >= 0 && c < g.Cols && getCell(g.Board, r, c, g.Cols) == mark {
+			count++
+			r -= d[0]
+			c -= d[1]
+		}
+		if count >= winLen {
+			return true
+		}
+	}
+	return false
+}
+
+// ---------- Timeout & Resign ----------
+
+// ClaimTimeout allows a player to claim a win if the opponent is inactive
+func ClaimTimeout(gameId *uint64) *string {
+	sender := sdk.GetEnv().Sender.Address
+	g := loadGame(*gameId)
+	require(g.Status == InProgress, "game is not in progress")
+	require(isPlayer(g, sender), "not a player")
+	require(g.Opponent != nil, "cannot timeout without opponent")
+
+	now := currentTimestamp()
+	lastMove := parseTimestamp(g.LastMoveAt)
+	require(now.Sub(lastMove) >= 7*24*time.Hour, "timeout period not reached")
+
+	var winner *sdk.Address
+	if g.Turn == X {
+		winner = g.Opponent
+	} else {
+		winner = &g.Creator
+	}
+	require(sender == *winner, "only opponent can claim timeout")
+
+	g.Winner = winner
+	g.Status = Finished
+	g.LastMoveAt = currentTimestampString()
+	if g.GameBetAmount != nil {
+		transferPot(g, *winner)
+	}
+	saveGame(g)
+	EmitGameWon(g.ID, winner.String())
+	return nil
+}
+
+// Resign allows a player to forfeit the game
+func Resign(gameId *uint64) *string {
+	sender := sdk.GetEnv().Sender.Address
+	g := loadGame(*gameId)
 	require(g.Status != Finished, "game is already finished")
+	require(isPlayer(g, sender), "not part of the game")
+
 	if g.Opponent == nil {
 		if g.GameBetAmount != nil {
-			// send funds back to creator
-			sdk.HiveTransfer(g.Creator, *g.GameBetAmount, *g.GameAsset)
+			transferPot(g, g.Creator)
 		}
 	} else {
-		switch sender {
-		case g.Creator:
+		if sender == g.Creator {
 			g.Winner = g.Opponent
-			if g.GameBetAmount != nil {
-				sdk.HiveTransfer(*g.Opponent, *g.GameBetAmount*2, *g.GameAsset)
-			}
-
-		case *g.Opponent:
+		} else {
 			g.Winner = &g.Creator
-			if g.GameBetAmount != nil {
-				sdk.HiveTransfer(g.Creator, *g.GameBetAmount*2, *g.GameAsset)
-			}
-		default:
-			sdk.Abort("not a player")
+		}
+		if g.GameBetAmount != nil {
+			transferPot(g, *g.Winner)
 		}
 	}
 
 	g.Status = Finished
-	saveGame(*g)
-	sdk.Log("Player resigned: " + string(sender))
+	g.LastMoveAt = currentTimestampString()
+	saveGame(g)
+	EmitGameResigned(g.ID, sender.String())
 	return nil
+}
+
+// ---------- Utilities ----------
+
+// isPlayer checks if an address is a participant in a game
+func isPlayer(g *Game, addr sdk.Address) bool {
+	return addr == g.Creator || (g.Opponent != nil && addr == *g.Opponent)
+}
+
+// transferPot transfers the total bet amount to a winner
+func transferPot(g *Game, sendTo sdk.Address) {
+	if g.GameAsset != nil && g.GameBetAmount != nil {
+		amt := *g.GameBetAmount
+		if g.Opponent != nil {
+			amt *= 2
+		}
+		sdk.HiveTransfer(sendTo, amt, *g.GameAsset)
+	}
+}
+
+// splitPot splits the bet between players in case of draw
+func splitPot(g *Game) {
+	if g.GameAsset != nil && g.GameBetAmount != nil && g.Opponent != nil {
+		sdk.HiveTransfer(g.Creator, *g.GameBetAmount, *g.GameAsset)
+		sdk.HiveTransfer(*g.Opponent, *g.GameBetAmount, *g.GameAsset)
+	}
 }
 
 // ---------- Queries ----------
 
-//go:wasmexport getGame
-func GetGame(gameId *string) *string {
-	g, exists := loadGame(*gameId)
-	require(exists, "game not found")
+// GetGame returns the full serialized game state
+func GetGame(gameId *uint64) *string {
+	g := loadGame(*gameId)
 	data, _ := json.Marshal(g)
 	s := string(data)
 	return &s
-}
-
-//go:wasmexport getGamesForGameState
-func GetGamesForState(gameState *int32) *string {
-
-	ids := make([]string, 0)
-	switch *gameState {
-	case WaitingForPlayer.Value(), InProgress.Value(), Finished.Value():
-		ids = GetIDsFromIndex(idxGamesForState + string(*gameState))
-	default:
-		sdk.Abort("unknown game state")
-	}
-	return loadGamesForIds(ids)
-}
-
-func loadGamesForIds(ids []string) *string {
-	games := make([]Game, 0, len(ids))
-	for _, v := range ids {
-		g, exists := loadGame(v)
-		require(exists, "game not found")
-		games = append(games, *g)
-	}
-
-	data := ToJSON(games, "games")
-	s := string(data)
-	return &s
-}
-
-//go:wasmexport getGameForCreator
-func GetGameForCreator(address *string) *string {
-	if *address == "" {
-		sdk.Abort("address is mandatory")
-	}
-	ids := make([]string, 0)
-	ids = GetIDsFromIndex(idxGamesCreator + *address)
-	return loadGamesForIds(ids)
-}
-
-//go:wasmexport getGameForPlayer
-func GetGameForPlayer(address *string) *string {
-	if *address == "" {
-		sdk.Abort("address is mandatory")
-	}
-	ids := make([]string, 0)
-	ids = GetIDsFromIndex(idxGamesPlayer + *address)
-	return loadGamesForIds(ids)
-}
-
-// ---------- Pure logic ----------
-
-func checkWinner(board [9]Cell) Cell {
-	wins := [8][3]int{
-		{0, 1, 2}, {3, 4, 5}, {6, 7, 8},
-		{0, 3, 6}, {1, 4, 7}, {2, 5, 8},
-		{0, 4, 8}, {2, 4, 6},
-	}
-	for _, w := range wins {
-		a, b, c := w[0], w[1], w[2]
-		if board[a] != Empty && board[a] == board[b] && board[b] == board[c] {
-			return board[a]
-		}
-	}
-	return Empty
 }
