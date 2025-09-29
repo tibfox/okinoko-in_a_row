@@ -8,16 +8,19 @@ import (
 
 // ---------- Game Type Definitions ----------
 
-// GameType enumerates the supported games
+// GameType enumerates the supported game variants.
 type GameType uint8
 
 const (
-	TicTacToe   GameType = 1
+	// TicTacToe represents a classic 3x3 Tic-Tac-Toe game.
+	TicTacToe GameType = 1
+	// ConnectFour represents a 6x7 Connect Four game.
 	ConnectFour GameType = 2
-	Gomoku      GameType = 3
+	// Gomoku represents a 15x15 Gomoku game (five in a row).
+	Gomoku GameType = 3
 )
 
-// String returns a human-readable game type
+// String returns a human-readable string representation of the GameType.
 func (gt GameType) String() string {
 	switch gt {
 	case TicTacToe:
@@ -31,7 +34,7 @@ func (gt GameType) String() string {
 	}
 }
 
-// Board dimensions and winning lengths per game
+// Board dimensions and winning lengths per game.
 const (
 	TTTRows, TTTCols       = 3, 3
 	C4Rows, C4Cols         = 6, 7
@@ -42,25 +45,31 @@ const (
 	GomokuWin = 5
 )
 
-// Cell represents a single board position: empty, X, or O
+// Cell represents a single position on the game board.
 type Cell uint8
 
 const (
+	// Empty indicates no move has been played in the cell.
 	Empty Cell = 0
-	X     Cell = 1
-	O     Cell = 2
+	// X indicates the X player's move.
+	X Cell = 1
+	// O indicates the O player's move.
+	O Cell = 2
 )
 
-// GameStatus enumerates the state of a game
+// GameStatus represents the lifecycle state of a game.
 type GameStatus uint8
 
 const (
+	// WaitingForPlayer means the game is awaiting an opponent.
 	WaitingForPlayer GameStatus = 0
-	InProgress       GameStatus = 1
-	Finished         GameStatus = 2
+	// InProgress means the game is currently active.
+	InProgress GameStatus = 1
+	// Finished means the game has ended.
+	Finished GameStatus = 2
 )
 
-// String returns human-readable game status
+// String returns a human-readable string representation of the GameStatus.
 func (s GameStatus) String() string {
 	switch s {
 	case WaitingForPlayer:
@@ -76,7 +85,8 @@ func (s GameStatus) String() string {
 
 // ---------- Game Structure ----------
 
-// Game represents a single game instance
+// Game represents a single game instance including board state, players,
+// current status, and optional betting information.
 type Game struct {
 	ID            uint64       `json:"id"`
 	Type          GameType     `json:"type"`
@@ -98,23 +108,24 @@ type Game struct {
 
 // ---------- Utility Functions ----------
 
-// require aborts execution if the condition is false
+// require aborts execution if the condition is false.
 func require(cond bool, msg string) {
 	if !cond {
 		sdk.Abort(msg)
 	}
 }
 
-// gameKey returns the state key for a given game ID
+// gameKey returns the storage key for a given game ID.
 func gameKey(gameId uint64) string { return "g:" + UInt64ToString(gameId) }
 
-// saveGame serializes and saves a game to blockchain state
+// saveGame serializes and saves a game to blockchain state.
 func saveGame(g *Game) {
 	data, _ := json.Marshal(g)
 	sdk.StateSetObject(gameKey(g.ID), string(data))
 }
 
-// loadGame retrieves and deserializes a game from blockchain state
+// loadGame retrieves and deserializes a game from blockchain state.
+// Aborts if the game does not exist.
 func loadGame(id uint64) *Game {
 	val := sdk.StateGetObject(gameKey(id))
 	if val == nil || *val == "" {
@@ -125,7 +136,8 @@ func loadGame(id uint64) *Game {
 
 // ---------- Board Initialization & Access ----------
 
-// initBoard returns a newly initialized empty board and its dimensions
+// initBoard returns a newly initialized empty board for the given GameType
+// along with its row and column dimensions.
 func initBoard(gt GameType) ([]byte, int, int) {
 	var rows, cols int
 	switch gt {
@@ -142,14 +154,14 @@ func initBoard(gt GameType) ([]byte, int, int) {
 	return make([]byte, size), rows, cols
 }
 
-// getCell returns the Cell value at a given row/col from a packed board
+// getCell returns the Cell value at the specified row and column.
 func getCell(board []byte, row, col, cols int) Cell {
 	idx := row*cols + col
 	byteIdx, bitShift := idx/4, (idx%4)*2
 	return Cell((board[byteIdx] >> bitShift) & 0x03)
 }
 
-// setCell sets a Cell value at a given row/col on a packed board
+// setCell sets the Cell value at the specified row and column.
 func setCell(board []byte, row, col, cols int, val Cell) {
 	idx := row*cols + col
 	byteIdx, bitShift := idx/4, (idx%4)*2
@@ -158,12 +170,15 @@ func setCell(board []byte, row, col, cols int, val Cell) {
 
 // ---------- Game Lifecycle: Create / Join ----------
 
+// CreateGameArgs defines the JSON payload required to create a game.
 type CreateGameArgs struct {
 	Name string   `json:"name"`
 	Type GameType `json:"type"`
 }
 
-// CreateGame initializes a new game and stores it in state
+// CreateGame initializes a new game, handles optional betting,
+// saves it to state, and emits a creation event.
+//
 // @wasmexport
 func CreateGame(payload *string) *string {
 	input := FromJSON[CreateGameArgs](*payload, "create game args")
@@ -193,7 +208,9 @@ func CreateGame(payload *string) *string {
 	return nil
 }
 
-// JoinGame lets a second player join a waiting game
+// JoinGame allows an opponent to join an existing game
+// that is waiting for a second player. Handles optional betting.
+//
 // @wasmexport
 func JoinGame(gameId *uint64) *string {
 	sender := sdk.GetEnv().Sender.Address
@@ -219,13 +236,16 @@ func JoinGame(gameId *uint64) *string {
 
 // ---------- Move Handling ----------
 
+// MakeMoveArgs defines the JSON payload required to make a move.
 type MakeMoveArgs struct {
 	GameId uint64 `json:"gameId"`
 	Row    uint8  `json:"row"`
 	Col    uint8  `json:"col"`
 }
 
-// MakeMove executes a player's move and checks for winner/draw
+// MakeMove executes a player's move, validates turn order,
+// updates board state, and checks for a winner or draw.
+//
 // @wasmexport
 func MakeMove(payload *string) *string {
 	input := FromJSON[MakeMoveArgs](*payload, "make move")
@@ -288,7 +308,8 @@ func MakeMove(payload *string) *string {
 
 // ---------- Connect Four Helper ----------
 
-// dropDisc places a disc in the chosen column (Connect Four only)
+// dropDisc places a disc in the lowest available cell of the chosen column
+// for Connect Four. Returns the row index, or -1 if the column is full.
 func dropDisc(g *Game, col int, mark Cell) int {
 	for r := g.Rows - 1; r >= 0; r-- {
 		if getCell(g.Board, r, col, g.Cols) == Empty {
@@ -301,7 +322,7 @@ func dropDisc(g *Game, col int, mark Cell) int {
 
 // ---------- Winner Checking ----------
 
-// checkWinner checks if the last move caused a win
+// checkWinner determines whether the last move resulted in a win.
 func checkWinner(g *Game, row, col int) bool {
 	var winLen int
 	switch g.Type {
@@ -317,7 +338,8 @@ func checkWinner(g *Game, row, col int) bool {
 	return checkLineWin(g, row, col, winLen)
 }
 
-// checkLineWin scans lines in 4 directions for a win
+// checkLineWin scans along four directions (vertical, horizontal, diagonal)
+// to determine if the required number of consecutive marks are present.
 func checkLineWin(g *Game, row, col, winLen int) bool {
 	mark := getCell(g.Board, row, col, g.Cols)
 	if mark == Empty {
@@ -347,7 +369,8 @@ func checkLineWin(g *Game, row, col, winLen int) bool {
 
 // ---------- Timeout & Resign ----------
 
-// ClaimTimeout allows a player to claim a win if the opponent is inactive
+// ClaimTimeout allows a player to claim victory if the opponent
+// has been inactive for at least 7 days.
 func ClaimTimeout(gameId *uint64) *string {
 	sender := sdk.GetEnv().Sender.Address
 	g := loadGame(*gameId)
@@ -378,7 +401,8 @@ func ClaimTimeout(gameId *uint64) *string {
 	return nil
 }
 
-// Resign allows a player to forfeit the game
+// Resign allows a player to forfeit the game, transferring
+// any bet to the opponent or returning it if no opponent exists.
 func Resign(gameId *uint64) *string {
 	sender := sdk.GetEnv().Sender.Address
 	g := loadGame(*gameId)
@@ -409,12 +433,12 @@ func Resign(gameId *uint64) *string {
 
 // ---------- Utilities ----------
 
-// isPlayer checks if an address is a participant in a game
+// isPlayer returns true if the given address is one of the game's players.
 func isPlayer(g *Game, addr sdk.Address) bool {
 	return addr == g.Creator || (g.Opponent != nil && addr == *g.Opponent)
 }
 
-// transferPot transfers the total bet amount to a winner
+// transferPot transfers the total bet amount to the winning player.
 func transferPot(g *Game, sendTo sdk.Address) {
 	if g.GameAsset != nil && g.GameBetAmount != nil {
 		amt := *g.GameBetAmount
@@ -425,7 +449,7 @@ func transferPot(g *Game, sendTo sdk.Address) {
 	}
 }
 
-// splitPot splits the bet between players in case of draw
+// splitPot splits the bet equally between both players in the event of a draw.
 func splitPot(g *Game) {
 	if g.GameAsset != nil && g.GameBetAmount != nil && g.Opponent != nil {
 		sdk.HiveTransfer(g.Creator, *g.GameBetAmount, *g.GameAsset)
@@ -435,7 +459,7 @@ func splitPot(g *Game) {
 
 // ---------- Queries ----------
 
-// GetGame returns the full serialized game state
+// GetGame returns the full serialized game state by ID.
 func GetGame(gameId *uint64) *string {
 	g := loadGame(*gameId)
 	data, _ := json.Marshal(g)
