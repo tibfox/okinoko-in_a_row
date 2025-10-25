@@ -1,4 +1,4 @@
-module vsc_tictactoe
+module okinoko-in_a_row
 
 go 1.24.0
 

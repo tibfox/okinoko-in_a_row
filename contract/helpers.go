@@ -3,9 +3,9 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"okinoko-in_a_row/sdk"
 	"strconv"
 	"strings"
-	"vsc_tictactoe/sdk"
 )
 
 // ---------- JSON Conversions ----------
@@ -36,6 +36,8 @@ func StringToUInt64(ptr *string) uint64 {
 }
 
 // UInt64ToString converts a uint64 to its decimal string representation.
+//
+//go:inline
 func UInt64ToString(val uint64) string {
 	return strconv.FormatUint(val, 10)
 }
@@ -53,6 +55,8 @@ type TransferAllow struct {
 var validAssets = []string{sdk.AssetHbd.String(), sdk.AssetHive.String()}
 
 // isValidAsset checks whether a given token string is a supported asset.
+//
+//go:inline
 func isValidAsset(token string) bool {
 	for _, a := range validAssets {
 		if token == a {
@@ -85,23 +89,6 @@ func GetFirstTransferAllow(intents []sdk.Intent) *TransferAllow {
 		}
 	}
 	return nil
-}
-
-// ---------- Game Counter Helpers ----------
-
-// getGameCount retrieves the current game counter from state.
-// Returns 0 if no counter exists.
-func getGameCount() uint64 {
-	ptr := sdk.StateGetObject("g:count")
-	if ptr == nil || *ptr == "" {
-		return 0
-	}
-	return StringToUInt64(ptr)
-}
-
-// setGameCount updates the game counter in state to the given value.
-func setGameCount(newCount uint64) {
-	sdk.StateSetObject("g:count", UInt64ToString(newCount))
 }
 
 // Converts compressed board (2 bits per cell) into ASCII string:
@@ -226,6 +213,8 @@ func nextField(s *string) string {
 }
 
 // decimal -> uint with no error path; assume valid ASCII digits
+//
+//go:inline
 func parseU64Fast(s string) uint64 {
 	var n uint64
 	for i := 0; i < len(s); i++ {
@@ -234,6 +223,7 @@ func parseU64Fast(s string) uint64 {
 	return n
 }
 
+//go:inline
 func parseU8Fast(s string) uint8 {
 	var n uint8
 	for i := 0; i < len(s); i++ {
@@ -256,11 +246,17 @@ func appendU64(dst []byte, v uint64) []byte {
 	}
 	return append(dst, buf[i:]...)
 }
+
+//go:inline
 func appendU16(dst []byte, v uint16) []byte { return appendU64(dst, uint64(v)) }
-func appendU8(dst []byte, v uint8) []byte   { return appendU64(dst, uint64(v)) }
+
+//go:inline
+func appendU8(dst []byte, v uint8) []byte { return appendU64(dst, uint64(v)) }
 
 // ----- conversion helpers --------
 // Convert string of digits to uint16 (no errors assumed)
+//
+//go:inline
 func strToUint16Fast(s string) uint16 {
 	var n uint16
 	for i := 0; i < len(s); i++ {
@@ -270,6 +266,8 @@ func strToUint16Fast(s string) uint16 {
 }
 
 // Convert string of digits to uint8 (no errors assumed)
+//
+//go:inline
 func strToUint8Fast(s string) uint8 {
 	var n uint8
 	for i := 0; i < len(s); i++ {
@@ -279,6 +277,8 @@ func strToUint8Fast(s string) uint8 {
 }
 
 // Checks if a given year is a leap year
+//
+//go:inline
 func isLeapYear(year uint16) bool {
 	y := int(year)
 	return (y%4 == 0 && y%100 != 0) || (y%400 == 0)

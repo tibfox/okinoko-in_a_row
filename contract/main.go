@@ -1,18 +1,14 @@
 package main
 
 import (
+	"okinoko-in_a_row/sdk"
 	"strings"
-	"vsc_tictactoe/sdk"
 )
 
 const gameTimeout = 7 * 24 * 3600 // 7 days
 
 /*
-=========================
-==== HYBRID ABI SPEC ====
-=========================
-
-External INPUTS (string, human-readable, '|' delimited):
+Exported Functions INPUTS (string, human-readable, '|' delimited):
 -------------------------------------------------------
 CreateGame   : "type|name"            // type: 1=TTT, 2=C4, 3=Gomoku
 JoinGame     : "gameId"
@@ -66,6 +62,7 @@ func CreateGame(payload *string) *string {
 		g.GameBetAmount = &amt
 	}
 	saveGame(g)
+	addGameToWaitingList(gameId)
 	setGameCount(gameId + 1)
 	EmitGameCreated(g.ID, *sender)
 	return nil
@@ -94,6 +91,7 @@ func JoinGame(payload *string) *string {
 	g.Opponent = sender
 	g.Status = InProgress
 	saveGame(g)
+	removeGameFromWaitingList(g.ID)
 	EmitGameJoined(g.ID, *sender)
 	return nil
 }
@@ -214,6 +212,7 @@ func Resign(payload *string) *string {
 		if g.GameBetAmount != nil {
 			transferPot(g, g.Creator)
 		}
+		removeGameFromWaitingList(g.ID)
 	} else {
 		if *sender == g.Creator {
 			g.Winner = g.Opponent
@@ -379,4 +378,57 @@ func splitPot(g *Game) {
 		sdk.HiveTransfer(sdk.Address(g.Creator), *g.GameBetAmount, *g.GameAsset)
 		sdk.HiveTransfer(sdk.Address(*g.Opponent), *g.GameBetAmount, *g.GameAsset)
 	}
+}
+
+// ---- waiting list ------
+
+const waitingGamesKey = "g:waiting"
+
+// addGameToWaitingList adds gameId to state key g:waiting
+func addGameToWaitingList(gameId uint64) {
+	gameString := UInt64ToString(gameId)
+	existing := sdk.StateGetObject(waitingGamesKey) // load current list
+	// if we already have at least one game waiting for opponents
+	if existing != nil && *existing != "" {
+		newVal := *existing + "," + gameString // append new contract to list
+		sdk.StateSetObject(waitingGamesKey, newVal)
+	} else {
+		// if we do not have any market contract yet
+		sdk.StateSetObject(waitingGamesKey, gameString)
+	}
+}
+
+// removeGameFromWaitingList removes a gameId from state key g:waiting
+func removeGameFromWaitingList(gameId uint64) *string {
+	gameString := UInt64ToString(gameId)
+	existing := sdk.StateGetObject(waitingGamesKey) // load current list
+
+	newCSV := removeFromCSV(*existing, gameString)
+	sdk.StateSetObject(waitingGamesKey, newCSV)
+	return nil
+}
+
+// removeFromCSV removes target from csv (returns new csv without trailing comma)
+func removeFromCSV(csv string, target string) string {
+	start := 0
+	found := false
+	b := make([]byte, 0, len(csv))
+	for i := 0; i <= len(csv); i++ {
+		if i == len(csv) || csv[i] == ',' {
+			part := csv[start:i]
+			if part == target {
+				found = true
+			} else {
+				if len(b) > 0 {
+					b = append(b, ',')
+				}
+				b = append(b, part...)
+			}
+			start = i + 1
+		}
+	}
+	if !found {
+		sdk.Abort("game not found")
+	}
+	return string(b)
 }

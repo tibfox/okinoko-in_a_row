@@ -1,8 +1,8 @@
 package main
 
 import (
+	"okinoko-in_a_row/sdk"
 	"strconv"
-	"vsc_tictactoe/sdk"
 )
 
 // Event represents the common structure for all emitted events.

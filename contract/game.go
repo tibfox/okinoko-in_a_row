@@ -2,7 +2,7 @@ package main
 
 import (
 	"encoding/binary"
-	"vsc_tictactoe/sdk"
+	"okinoko-in_a_row/sdk"
 )
 
 // ---------- Types & constants ----------
@@ -262,4 +262,21 @@ func setCell(board []byte, row, col, cols int, val Cell) {
 	idx := row*cols + col
 	byteIdx, bitShift := idx/4, (idx%4)*2
 	board[byteIdx] = (board[byteIdx] & ^(0x03 << bitShift)) | (byte(val) << bitShift)
+}
+
+// ---------- Game Counter Helpers ----------
+
+// getGameCount retrieves the current game counter from state.
+// Returns 0 if no counter exists.
+func getGameCount() uint64 {
+	ptr := sdk.StateGetObject("g:count")
+	if ptr == nil || *ptr == "" {
+		return 0
+	}
+	return StringToUInt64(ptr)
+}
+
+// setGameCount updates the game counter in state to the given value.
+func setGameCount(newCount uint64) {
+	sdk.StateSetObject("g:count", UInt64ToString(newCount))
 }

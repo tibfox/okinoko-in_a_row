@@ -5,8 +5,8 @@ package sdk
 
 import (
 	"encoding/json"
+	_ "okinoko-in_a_row/runtime"
 	"strconv"
-	_ "vsc_tictactoe/runtime"
 )
 
 //go:wasmimport sdk console.log
