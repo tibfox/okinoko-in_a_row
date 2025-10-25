@@ -37,13 +37,13 @@ type Game struct {
 	ID            uint64
 	Type          GameType
 	Name          string
-	Creator       sdk.Address
-	Opponent      *sdk.Address
+	Creator       string
+	Opponent      *string
 	Board         []byte // 2bpp, 4 cells per byte
 	Turn          Cell
 	MovesCount    uint16
 	Status        GameStatus
-	Winner        *sdk.Address
+	Winner        *string
 	GameAsset     *sdk.Asset
 	GameBetAmount *int64
 	LastMoveAt    uint64 // unix seconds
@@ -100,12 +100,12 @@ func encodeGame(g *Game) []byte {
 	// Name (u8 len) + Creator (u16 len + bytes)
 	w8(byte(len(g.Name)))
 	out = append(out, g.Name...)
-	writeStr(g.Creator.String())
+	writeStr(g.Creator)
 
 	// Opponent
 	if g.Opponent != nil {
 		w8(1)
-		writeStr(g.Opponent.String())
+		writeStr(*g.Opponent)
 	} else {
 		w8(0)
 	}
@@ -113,7 +113,7 @@ func encodeGame(g *Game) []byte {
 	// Winner
 	if g.Winner != nil {
 		w8(1)
-		writeStr(g.Winner.String())
+		writeStr(*g.Winner)
 	} else {
 		w8(0)
 	}
@@ -153,14 +153,14 @@ func decodeGame(b []byte) *Game {
 
 	nameLen := int(r.u8())
 	g.Name = string(r.bytes(nameLen))
-	g.Creator = sdk.Address(r.str())
+	g.Creator = r.str()
 
 	if r.u8() == 1 {
-		opp := sdk.Address(r.str())
+		opp := r.str()
 		g.Opponent = &opp
 	}
 	if r.u8() == 1 {
-		ww := sdk.Address(r.str())
+		ww := r.str()
 		g.Winner = &ww
 	}
 	if r.u8() == 1 {

@@ -42,7 +42,7 @@ func CreateGame(payload *string) *string {
 	gt := GameType(parseU8Fast(typStr))
 	require(gt == TicTacToe || gt == ConnectFour || gt == Gomoku, "invalid type")
 
-	sender := sdk.GetEnv().Sender.Address
+	sender := sdk.GetEnvKey("msg.sender")
 	gameId := getGameCount()
 	ts := *sdk.GetEnvKey("block.timestamp")
 
@@ -50,7 +50,7 @@ func CreateGame(payload *string) *string {
 		ID:         gameId,
 		Type:       gt,
 		Name:       name,
-		Creator:    sender,
+		Creator:    *sender,
 		Board:      initBoard(gt),
 		Turn:       X,
 		MovesCount: 0,
@@ -67,7 +67,7 @@ func CreateGame(payload *string) *string {
 	}
 	saveGame(g)
 	setGameCount(gameId + 1)
-	EmitGameCreated(g.ID, sender.String())
+	EmitGameCreated(g.ID, *sender)
 	return nil
 }
 
@@ -77,10 +77,10 @@ func JoinGame(payload *string) *string {
 	gameId := parseU64Fast(nextField(&in))
 	require(in == "", "to many arguments")
 
-	sender := sdk.GetEnv().Sender.Address
+	sender := sdk.GetEnvKey("msg.sender")
 	g := loadGame(gameId)
 	require(g.Status == WaitingForPlayer, "cannot join")
-	require(sender != g.Creator, "creator cannot join")
+	require(*sender != g.Creator, "creator cannot join")
 
 	// Optional betting: must match creator
 	if g.GameAsset != nil && g.GameBetAmount != nil && *g.GameBetAmount > 0 {
@@ -91,10 +91,10 @@ func JoinGame(payload *string) *string {
 		sdk.HiveDraw(amt, ta.Token)
 	}
 
-	g.Opponent = &sender
+	g.Opponent = sender
 	g.Status = InProgress
 	saveGame(g)
-	EmitGameJoined(g.ID, sender.String())
+	EmitGameJoined(g.ID, *sender)
 	return nil
 }
 
@@ -106,16 +106,16 @@ func MakeMove(payload *string) *string {
 	col := int(parseU8Fast(nextField(&in)))
 	require(in == "", "to many arguments")
 
-	sender := sdk.GetEnv().Sender.Address
+	sender := sdk.GetEnvKey("msg.sender")
 	g := loadGame(gameID)
 	require(g.Status == InProgress, "game not in progress")
-	require(isPlayer(g, sender), "not a player")
+	require(isPlayer(g, *sender), "not a player")
 
 	rows, cols := dims(g.Type)
 	require(row >= 0 && row < rows && col >= 0 && col < cols, "invalid move")
 
 	var mark Cell
-	if sender == g.Creator {
+	if *sender == g.Creator {
 		mark = X
 	} else {
 		mark = O
@@ -149,7 +149,7 @@ func MakeMove(payload *string) *string {
 		if g.GameBetAmount != nil {
 			transferPot(g, *g.Winner)
 		}
-		EmitGameWon(g.ID, g.Winner.String())
+		EmitGameWon(g.ID, *g.Winner)
 	} else if g.MovesCount >= uint16(rows*cols) {
 		g.Status = Finished
 		if g.GameBetAmount != nil {
@@ -168,10 +168,10 @@ func ClaimTimeout(payload *string) *string {
 	gameId := parseU64Fast(nextField(&in))
 	require(in == "", "to many arguments")
 
-	sender := sdk.GetEnv().Sender.Address
+	sender := sdk.GetEnvKey("msg.sender")
 	g := loadGame(gameId)
 	require(g.Status == InProgress, "game is not in progress")
-	require(isPlayer(g, sender), "not a player")
+	require(isPlayer(g, *sender), "not a player")
 	require(g.Opponent != nil, "cannot timeout without opponent")
 
 	ts := *sdk.GetEnvKey("block.timestamp")
@@ -180,13 +180,13 @@ func ClaimTimeout(payload *string) *string {
 	timeoutISO := unixToISO8601(timeoutAt)
 	require(now >= timeoutAt, ts+": timeout not reached. Expires at: "+timeoutISO)
 
-	var winner *sdk.Address
+	var winner *string
 	if g.Turn == X {
 		winner = g.Opponent
 	} else {
 		winner = &g.Creator
 	}
-	require(sender == *winner, "only opponent can claim timeout")
+	require(*sender == *winner, "only opponent can claim timeout")
 
 	g.Winner = winner
 	g.Status = Finished
@@ -195,7 +195,7 @@ func ClaimTimeout(payload *string) *string {
 		transferPot(g, *winner)
 	}
 	saveGame(g)
-	EmitGameWon(g.ID, winner.String())
+	EmitGameWon(g.ID, *winner)
 	return nil
 }
 
@@ -205,17 +205,17 @@ func Resign(payload *string) *string {
 	gameId := parseU64Fast(nextField(&in))
 	require(in == "", "to many arguments")
 
-	sender := sdk.GetEnv().Sender.Address
+	sender := sdk.GetEnvKey("msg.sender")
 	g := loadGame(gameId)
 	require(g.Status != Finished, "game is already finished")
-	require(isPlayer(g, sender), "not part of the game")
+	require(isPlayer(g, *sender), "not part of the game")
 
 	if g.Opponent == nil {
 		if g.GameBetAmount != nil {
 			transferPot(g, g.Creator)
 		}
 	} else {
-		if sender == g.Creator {
+		if *sender == g.Creator {
 			g.Winner = g.Opponent
 		} else {
 			g.Winner = &g.Creator
@@ -230,7 +230,7 @@ func Resign(payload *string) *string {
 
 	g.LastMoveAt = parseISO8601ToUnix(ts)
 	saveGame(g)
-	EmitGameResigned(g.ID, sender.String())
+	EmitGameResigned(g.ID, *sender)
 	return nil
 }
 
@@ -256,10 +256,10 @@ func GetGame(payload *string) *string {
 	meta = append(meta, '|')
 	meta = append(meta, g.Name...)
 	meta = append(meta, '|')
-	meta = append(meta, g.Creator.String()...)
+	meta = append(meta, g.Creator...)
 	meta = append(meta, '|')
 	if g.Opponent != nil {
-		meta = append(meta, g.Opponent.String()...)
+		meta = append(meta, *g.Opponent...)
 	}
 	meta = append(meta, '|')
 
@@ -277,7 +277,7 @@ func GetGame(payload *string) *string {
 	meta = append(meta, '|')
 
 	if g.Winner != nil {
-		meta = append(meta, g.Winner.String()...)
+		meta = append(meta, *g.Winner...)
 	}
 	meta = append(meta, '|')
 
@@ -360,23 +360,23 @@ func checkLineWin(g *Game, row, col, winLen int) bool {
 	return false
 }
 
-func isPlayer(g *Game, addr sdk.Address) bool {
+func isPlayer(g *Game, addr string) bool {
 	return addr == g.Creator || (g.Opponent != nil && addr == *g.Opponent)
 }
 
-func transferPot(g *Game, sendTo sdk.Address) {
+func transferPot(g *Game, sendTo string) {
 	if g.GameAsset != nil && g.GameBetAmount != nil {
 		amt := *g.GameBetAmount
 		if g.Opponent != nil {
 			amt *= 2
 		}
-		sdk.HiveTransfer(sendTo, amt, *g.GameAsset)
+		sdk.HiveTransfer(sdk.Address(sendTo), amt, *g.GameAsset)
 	}
 }
 
 func splitPot(g *Game) {
 	if g.GameAsset != nil && g.GameBetAmount != nil && g.Opponent != nil {
-		sdk.HiveTransfer(g.Creator, *g.GameBetAmount, *g.GameAsset)
-		sdk.HiveTransfer(*g.Opponent, *g.GameBetAmount, *g.GameAsset)
+		sdk.HiveTransfer(sdk.Address(g.Creator), *g.GameBetAmount, *g.GameAsset)
+		sdk.HiveTransfer(sdk.Address(*g.Opponent), *g.GameBetAmount, *g.GameAsset)
 	}
 }
