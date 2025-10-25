@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/binary"
 	"okinoko-in_a_row/sdk"
+	"strings"
 )
 
 // ---------- Types & Constants ----------
@@ -38,6 +39,17 @@ const (
 	Finished         GameStatus = 2 // Game ended (win, draw, resignation, timeout)
 )
 
+// ---------- Swap2 Freestyle (Gomoku) opening state (stored separately) ----------
+
+// Swap2 phases for Gomoku freestyle opening
+const (
+	swap2PhaseNone        uint8 = 0 // not in opening (normal gameplay)
+	swap2PhaseOpening     uint8 = 1 // creator placing first 3 stones (2 X, 1 O)
+	swap2PhaseSwapChoice  uint8 = 2 // opponent chooses: swap / stay / add
+	swap2PhaseExtraPlace  uint8 = 3 // opponent placing 2 extra stones (one X, one O)
+	swap2PhaseColorChoice uint8 = 4 // creator chooses final color after extra stones
+)
+
 // ---------- Game (runtime struct; storage is binary) ----------
 
 // Game contains the full game state used at runtime and persisted via binary codec.
@@ -68,7 +80,26 @@ type Game struct {
 	Winner        *string
 	GameAsset     *sdk.Asset
 	GameBetAmount *int64
-	LastMoveAt    uint64 // unix seconds
+	LastMoveAt    uint64        // unix seconds
+	Phase         GamePhase     // Tracks Swap2 opening phases for Gomoku
+	SwapPending   bool          // Whether we are waiting for swap decision
+	InitialMoves  []OpeningMove // Stores opening stones
+}
+
+// GamePhase defines the current play phase, used for Gomoku Swap2.
+type GamePhase uint8
+
+const (
+	PhaseNormal           GamePhase = iota // TicTacToe/Connect4 or post-opening Gomoku
+	PhaseGomokuOpening                     // First three stones placement
+	PhaseGomokuSwapChoice                  // Waiting for opponent to decide
+)
+
+// OpeningMove records initial stones for Gomoku Swap2 phase.
+type OpeningMove struct {
+	Row  uint8
+	Col  uint8
+	Cell Cell // X or O
 }
 
 // ---------- Binary State Codec (v2) ----------
@@ -349,4 +380,118 @@ func getGameCount() uint64 {
 // setGameCount updates the stored global game counter to newCount.
 func setGameCount(newCount uint64) {
 	sdk.StateSetObject("g:count", UInt64ToString(newCount))
+}
+
+// ----- swap2 related helpers ------
+
+// swap2Key builds the state key as "g:swap2:<id>"
+func swap2Key(id uint64) string {
+	return "g:swap2:" + UInt64ToString(id)
+}
+
+type swap2State struct {
+	Phase     uint8
+	NextActor string
+	InitX     uint8
+	InitO     uint8
+	ExtraX    uint8
+	ExtraO    uint8
+}
+
+// loadSwap2 loads the swap state for a game, or returns nil if no swap phase is active.
+func loadSwap2(id uint64) *swap2State {
+	ptr := sdk.StateGetObject(swap2Key(id))
+	if ptr == nil || *ptr == "" {
+		return nil
+	}
+	s := *ptr
+	st := &swap2State{}
+	st.Phase = parseU8Fast(nextField(&s))
+	st.NextActor = nextField(&s)
+	st.InitX = parseU8Fast(nextField(&s))
+	st.InitO = parseU8Fast(nextField(&s))
+	st.ExtraX = parseU8Fast(nextField(&s))
+	st.ExtraO = parseU8Fast(nextField(&s))
+	return st
+}
+
+// saveSwap2 saves the swap state as a compact | delimited string.
+func saveSwap2(id uint64, st *swap2State) {
+	var b strings.Builder
+	b.Grow(64) // pre-allocate small buffer
+	b.WriteString(UInt64ToString(uint64(st.Phase)))
+	b.WriteString("|")
+	b.WriteString(st.NextActor)
+	b.WriteString("|")
+	b.WriteString(UInt64ToString(uint64(st.InitX)))
+	b.WriteString("|")
+	b.WriteString(UInt64ToString(uint64(st.InitO)))
+	b.WriteString("|")
+	b.WriteString(UInt64ToString(uint64(st.ExtraX)))
+	b.WriteString("|")
+	b.WriteString(UInt64ToString(uint64(st.ExtraO)))
+	sdk.StateSetObject(swap2Key(id), b.String())
+}
+
+// clearSwap2 clears the swap state once opening is complete.
+func clearSwap2(id uint64) {
+	sdk.StateSetObject(swap2Key(id), "")
+}
+
+// ---- Waiting list ------
+
+// ---- waiting list ------
+
+const waitingGamesKey = "g:waiting:"
+const waitingCountKey = "g:waiting:count"
+
+func waitingIndexKey(i uint64) string {
+	return waitingGamesKey + UInt64ToString(i)
+}
+
+func getWaitingCount() uint64 {
+	ptr := sdk.StateGetObject(waitingCountKey)
+	if ptr == nil || *ptr == "" {
+		return 0
+	}
+	return StringToUInt64(ptr)
+}
+
+func setWaitingCount(n uint64) {
+	sdk.StateSetObject(waitingCountKey, UInt64ToString(n))
+}
+
+// add game to waiting list
+func addGameToWaitingList(gameId uint64) {
+	count := getWaitingCount()
+	sdk.StateSetObject(waitingIndexKey(count), UInt64ToString(gameId))
+	setWaitingCount(count + 1)
+}
+
+// remove game using swap-and-pop (removed index will be swapped with last one)
+func removeGameFromWaitingList(gameId uint64) *string {
+	count := getWaitingCount()
+	require(count > 0, "waiting list empty")
+
+	// find index of gameId
+	var idx uint64 = ^uint64(0) // ^uint64(0) = 18446744073709551615
+	for i := uint64(0); i < count; i++ {
+		ptr := sdk.StateGetObject(waitingIndexKey(i))
+		if ptr != nil && *ptr == UInt64ToString(gameId) {
+			idx = i
+			break
+		}
+	}
+	require(idx != ^uint64(0), "game not found")
+
+	lastIdx := count - 1
+	if idx != lastIdx {
+		lastVal := sdk.StateGetObject(waitingIndexKey(lastIdx))
+		sdk.StateSetObject(waitingIndexKey(idx), *lastVal)
+	}
+
+	// clear last entry
+	sdk.StateSetObject(waitingIndexKey(lastIdx), "")
+	setWaitingCount(lastIdx)
+	return nil
 }

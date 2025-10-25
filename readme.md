@@ -12,7 +12,7 @@ Players interact via WASM-exported functions, sending human-readable strings as 
 | ----- | ----------- | ---------- | ------------------------- |
 | 1     | [TicTacToe](https://en.wikipedia.org/wiki/Tic-tac-toe)   | 3x3        | 3 in a row                |
 | 2     | [ConnectFour](https://en.wikipedia.org/wiki/Connect_Four) | 6x7        | 4 in a row (gravity drop) |
-| 3     | [Gomoku](https://en.wikipedia.org/wiki/Gomoku)      | 15x15      | 5 in a row                |
+| 3     | [Gomoku (Swap2 freestyle)](https://en.wikipedia.org/wiki/Gomoku)      | 15x15      | 5 in a row                |
 
 ---
 

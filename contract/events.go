@@ -70,3 +70,85 @@ func EmitGameMoveMade(gameId uint64, moveByAddress string, pos uint8) {
 		"cell":   strconv.FormatUint(uint64(pos), 10),
 	})
 }
+
+// EmitSwapOpeningPlaced emits when a stone is placed during the initial opening phase (first 3 stones).
+// Attributes:
+//
+//	id: game ID
+//	by: player address
+//	row: stone row
+//	col: stone column
+//	cell: 1 (X/black) or 2 (O/white)
+//	countX / countO: total X and O stones placed so far
+func EmitSwapOpeningPlaced(gameId uint64, by string, row, col, cell, countX, countO uint8) {
+	emitEvent("swapOpeningPlaced", map[string]string{
+		"id":     UInt64ToString(gameId),
+		"by":     by,
+		"row":    strconv.FormatUint(uint64(row), 10),
+		"col":    strconv.FormatUint(uint64(col), 10),
+		"cell":   strconv.FormatUint(uint64(cell), 10),
+		"countX": strconv.FormatUint(uint64(countX), 10),
+		"countO": strconv.FormatUint(uint64(countO), 10),
+	})
+}
+
+// EmitSwapChoiceMade emits when the opponent decides how to continue after initial 3 stones.
+// Attributes:
+//
+//	id: game ID
+//	by: opponent address
+//	choice: "swap", "stay", or "add"
+func EmitSwapChoiceMade(gameId uint64, by, choice string) {
+	emitEvent("swapChoiceMade", map[string]string{
+		"id":     UInt64ToString(gameId),
+		"by":     by,
+		"choice": choice,
+	})
+}
+
+// EmitSwapExtraPlaced emits when a stone is placed in the optional extra placement phase (Swap2).
+// Attributes:
+//
+//	id: game ID
+//	by: opponent or creator
+//	row, col, cell: stone placement data
+//	extraX / extraO: how many extra X/O placed so far
+func EmitSwapExtraPlaced(gameId uint64, by string, row, col, cell, extraX, extraO uint8) {
+	emitEvent("swapExtraPlaced", map[string]string{
+		"id":     UInt64ToString(gameId),
+		"by":     by,
+		"row":    strconv.FormatUint(uint64(row), 10),
+		"col":    strconv.FormatUint(uint64(col), 10),
+		"cell":   strconv.FormatUint(uint64(cell), 10),
+		"extraX": strconv.FormatUint(uint64(extraX), 10),
+		"extraO": strconv.FormatUint(uint64(extraO), 10),
+	})
+}
+
+// EmitSwapColorChosen emits when the creator selects the final stone color (X or O).
+// Attributes:
+//
+//	id: game ID
+//	by: creator address
+//	chosenColor: "1" (X) or "2" (O)
+func EmitSwapColorChosen(gameId uint64, by string, chosenColor uint8) {
+	emitEvent("swapColorChosen", map[string]string{
+		"id":          UInt64ToString(gameId),
+		"by":          by,
+		"chosenColor": strconv.FormatUint(uint64(chosenColor), 10),
+	})
+}
+
+// EmitSwapPhaseComplete emits when Swap2 freestyle opening ends and normal gameplay begins.
+// Attributes:
+//
+//	id: game ID
+//	creator: final X player
+//	opponent: final O player
+func EmitSwapPhaseComplete(gameId uint64, creator, opponent string) {
+	emitEvent("swapPhaseComplete", map[string]string{
+		"id":       UInt64ToString(gameId),
+		"creator":  creator,
+		"opponent": opponent,
+	})
+}

@@ -17,6 +17,7 @@
 //	Resign				g_resign	: "gameId"
 //	GetGame				g_get 		: "gameId"
 //	GetWaitingGames		g_waiting	: ""
+//	SwapMove			g_swap		: "gameId|op|..."        // Gomoku Swap2 freestyle opening control (see below)
 //
 // GetGame Output Format:
 //
@@ -27,9 +28,25 @@
 //
 //	"1,2,3"
 //	- Comma-separated list of game IDs waiting for an opponent (e.g. "0,1,2").
+//
+// SwapMove (g_swap) for Gomoku Swap2 Freestyle:
+//
+//	Phases: Opening → SwapChoice → (optional) ExtraPlacement → ColorChoice → Normal play
+//	- Opening (creator): place exactly three stones total (two X and one O)
+//	    "gameId|place|row|col|cell"      // cell: 1 for X, 2 for O
+//	- SwapChoice (opponent): choose one of:
+//	    "gameId|choose|swap"             // swap colors (roles)
+//	    "gameId|choose|stay"             // keep colors
+//	    "gameId|choose|add"              // place two more stones (one X, one O) then creator chooses color
+//	- ExtraPlacement (opponent): two calls, one X and one O:
+//	    "gameId|add|row|col|cell"
+//	- ColorChoice (creator): choose final color after extra placement:
+//	    "gameId|color|1"  (be X)   or   "gameId|color|2"  (be O)
+//	After ColorChoice or immediate choose|swap/stay, normal play begins; X moves first.
 package main
 
 import (
+	// for swap2 state storage
 	"okinoko-in_a_row/sdk"
 	"strings"
 )
@@ -53,6 +70,8 @@ const gameTimeout = 7 * 24 * 3600 // 7 days
 // Returns:
 //
 //	<gameId> on success. Any validation error aborts execution.
+//
+//go:wasmexport g_create
 func CreateGame(payload *string) *string {
 	in := *payload
 	typStr := nextField(&in) // extract game type from input
@@ -73,7 +92,7 @@ func CreateGame(payload *string) *string {
 		Name:       name,
 		Creator:    *sender,
 		Board:      initBoard(gt), // initialize empty board
-		Turn:       X,             // creator always plays X
+		Turn:       X,             // creator always plays X (opening uses g_swap when Gomoku)
 		MovesCount: 0,
 		Status:     WaitingForPlayer,
 		LastMoveAt: parseISO8601ToUnix(ts), // store timestamp as unix time
@@ -108,6 +127,8 @@ func CreateGame(payload *string) *string {
 //
 //	nil on success. Execution aborts if the game is not joinable or bet
 //	requirements are not met.
+//
+//go:wasmexport g_join
 func JoinGame(payload *string) *string {
 	in := *payload
 	gameId := parseU64Fast(nextField(&in)) // extract gameId from input
@@ -128,9 +149,23 @@ func JoinGame(payload *string) *string {
 	}
 
 	g.Opponent = sender             // set opponent address
-	g.Status = InProgress           // game now begins
+	g.Status = InProgress           // game begins (Gomoku opening handled via g_swap)
 	saveGame(g)                     // persist updated game state
 	removeGameFromWaitingList(g.ID) // remove from waiting pool
+
+	// If Gomoku, initialize Swap2 opening phase state (creator acts first)
+	if g.Type == Gomoku {
+		st := &swap2State{
+			Phase:     swap2PhaseOpening,
+			NextActor: g.Creator, // creator places opening stones
+			InitX:     0,
+			InitO:     0,
+			ExtraX:    0,
+			ExtraO:    0,
+		}
+		saveSwap2(g.ID, st)
+	}
+
 	EmitGameJoined(g.ID, *sender)
 	return nil
 }
@@ -149,6 +184,8 @@ func JoinGame(payload *string) *string {
 // Returns:
 //
 //	nil on success. Execution aborts if the move is invalid or not the player's turn.
+//
+//go:wasmexport g_move
 func MakeMove(payload *string) *string {
 	in := *payload
 	gameID := parseU64Fast(nextField(&in))  // game identifier
@@ -160,6 +197,13 @@ func MakeMove(payload *string) *string {
 	g := loadGame(gameID)                 // load current game state
 	require(g.Status == InProgress, "game not in progress")
 	require(isPlayer(g, *sender), "not a player")
+
+	// If Gomoku is still in Swap2 opening, regular moves are not allowed
+	if g.Type == Gomoku {
+		if st := loadSwap2(g.ID); st != nil && st.Phase != swap2PhaseNone {
+			sdk.Abort("opening phase in progress; use g_swap")
+		}
+	}
 
 	rows, cols := dims(g.Type) // game-specific dimensions
 	require(row >= 0 && row < rows && col >= 0 && col < cols, "invalid move")
@@ -225,23 +269,18 @@ func MakeMove(payload *string) *string {
 // ClaimTimeout allows a player to claim victory if the opponent has failed to
 // make a move within the allowed timeout window (7 days by default).
 //
-// It verifies that the game is active, that timeout has actually elapsed,
-// and that only the player whose turn it is *not* (i.e., the waiting player)
-// may call this function to win by timeout.
+// During Gomoku Swap2 opening, the "turn" is determined by the opening phase's
+// NextActor (not by g.Turn). The winner is always the *other* participant.
 //
 // Input Format:
 //
 //	"gameId"
 //
-// Timeout Logic:
-//   - Each move updates `LastMoveAt` to the timestamp of that move.
-//   - If the current time exceeds LastMoveAt + gameTimeout,
-//     the player waiting for the opponent's move can claim victory.
-//
 // Returns:
 //
-//	nil on success. Execution aborts if timeout is not reached or caller
-//	is not the eligible player.
+//	nil on success. Execution aborts if timeout is not reached or caller is not eligible.
+//
+//go:wasmexport g_timeout
 func ClaimTimeout(payload *string) *string {
 	in := *payload
 	gameId := parseU64Fast(nextField(&in)) // parse gameId
@@ -264,22 +303,44 @@ func ClaimTimeout(payload *string) *string {
 	// Ensure timeout period has elapsed
 	require(now > timeoutAt, ts+": timeout not reached. Expires at: "+timeoutISO)
 
-	// Determine which player wins:
-	// If it's X's turn but timer expired, O (the opponent) wins, and vice versa.
-	var winner *string
-	if g.Turn == X {
-		winner = g.Opponent // waiting player is O
-	} else {
-		winner = &g.Creator // waiting player is X
+	// Determine who is eligible based on phase
+	if g.Type == Gomoku {
+		if st := loadSwap2(g.ID); st != nil && st.Phase != swap2PhaseNone {
+			// Opening: winner is the opposite of NextActor
+			var winner string
+			if st.NextActor == g.Creator && g.Opponent != nil {
+				winner = *g.Opponent
+			} else {
+				winner = g.Creator
+			}
+			require(*sender == winner, "only opponent can claim timeout")
+			g.Winner = &winner
+			g.Status = Finished
+			g.LastMoveAt = now
+			if g.GameBetAmount != nil {
+				transferPot(g, winner)
+			}
+			saveGame(g)
+			clearSwap2(g.ID) // cleanup opening state
+			EmitGameWon(g.ID, winner)
+			return nil
+		}
 	}
 
+	// Normal play timeout logic
+	var winner *string
+	if g.Turn == X {
+		winner = g.Opponent
+	} else {
+		winner = &g.Creator
+	}
 	require(*sender == *winner, "only opponent can claim timeout")
 
 	g.Winner = winner
 	g.Status = Finished
 	g.LastMoveAt = now
 	if g.GameBetAmount != nil {
-		transferPot(g, *winner) // payout winner
+		transferPot(g, *winner)
 	}
 	saveGame(g)
 	EmitGameWon(g.ID, *winner)
@@ -291,23 +352,17 @@ func ClaimTimeout(payload *string) *string {
 // forfeits any bet, and the game is simply removed from the waiting list.
 // If an opponent is present, the other player is declared the winner.
 //
+// During Gomoku Swap2 opening, resignation clears the opening state as well.
+//
 // Input Format:
 //
 //	"gameId"
 //
-// Behavior:
-//   - If the game is waiting for an opponent:
-//   - Only the creator can resign.
-//   - The game is removed from the waiting queue.
-//   - If a bet exists, the creator automatically wins back their own bet
-//     (no transfer occurs because no pot was accumulated).
-//   - If the game is in progress with two players:
-//   - The resigning player loses and the other player is set as winner.
-//   - If betting is active, the entire pot is transferred to the winner.
-//
 // Returns:
 //
 //	nil on success, aborts otherwise.
+//
+//go:wasmexport g_resign
 func Resign(payload *string) *string {
 	in := *payload
 	gameId := parseU64Fast(nextField(&in)) // parse gameId
@@ -340,54 +395,315 @@ func Resign(payload *string) *string {
 	ts := *sdk.GetEnvKey("block.timestamp")
 	g.LastMoveAt = parseISO8601ToUnix(ts) // record time of resignation
 	saveGame(g)
+	clearSwap2(g.ID) // ensure swap2 state is cleared if present
 	EmitGameResigned(g.ID, *sender)
+	return nil
+}
+
+// SwapMove drives the Gomoku Swap2 freestyle opening sequence (string-encoded state).
+//
+// Accepted payloads (all fields are '|' delimited):
+//
+//	Opening (creator places first 3 stones: exactly two X and one O, any order):
+//	  "gameId|place|row|col|cell"      // cell: '1' for X, '2' for O
+//
+//	SwapChoice (opponent chooses how to continue after the 3rd stone):
+//	  "gameId|choose|swap"             // swap colors (roles) and begin normal play
+//	  "gameId|choose|stay"             // keep colors and begin normal play
+//	  "gameId|choose|add"              // place two more stones (one X, one O)
+//
+//	ExtraPlacement (opponent; must place one X and one O, any order):
+//	  "gameId|add|row|col|cell"
+//
+//	ColorChoice (creator; after extra stones were placed):
+//	  "gameId|color|1"  (be X)
+//	  "gameId|color|2"  (be O)
+//
+// Notes:
+//   - Stones placed during opening increment MovesCount and update LastMoveAt.
+//   - No win/draw checks are performed during opening.
+//   - After opening completes, Turn is set to X and normal play (g_move) resumes.
+//
+//go:wasmexport g_swap
+func SwapMove(payload *string) *string {
+	in := *payload
+	gameID := parseU64Fast(nextField(&in))
+	op := nextField(&in)
+	arg1 := nextField(&in) // reused depending on op
+	arg2 := nextField(&in) // reused depending on op
+	arg3 := nextField(&in) // reused depending on op
+	require(in == "", "to many arguments")
+
+	g := loadGame(gameID)
+	require(g.Type == Gomoku, "swap only for gomoku")
+	require(g.Opponent != nil, "opponent required")
+	require(g.Status == InProgress, "game not in progress")
+
+	st := loadSwap2(g.ID)
+	require(st != nil && st.Phase != swap2PhaseNone, "not in opening")
+
+	caller := sdk.GetEnvKey("msg.sender")
+	require(*caller == st.NextActor, "not your opening turn")
+
+	rows, cols := dims(Gomoku)
+
+	switch op {
+
+	// ---------- Opening placements (first 3 stones by creator) ----------
+	case "place":
+		require(st.Phase == swap2PhaseOpening, "wrong phase")
+		row := int(parseU8Fast(arg1))
+		col := int(parseU8Fast(arg2))
+		cell := parseU8Fast(arg3)
+		require(row >= 0 && row < rows && col >= 0 && col < cols, "invalid coord")
+		require(cell == 1 || cell == 2, "invalid cell")
+		require(getCell(g.Board, row, col, cols) == Empty, "cell occupied")
+
+		if cell == 1 {
+			require(st.InitX < 2, "too many X in opening")
+			st.InitX++
+			setCell(g.Board, row, col, cols, X)
+		} else {
+			require(st.InitO < 1, "too many O in opening")
+			st.InitO++
+			setCell(g.Board, row, col, cols, O)
+		}
+		g.MovesCount++
+
+		// Event: one opening stone placed
+		EmitSwapOpeningPlaced(g.ID, *caller, uint8(row), uint8(col), cell, st.InitX, st.InitO)
+
+		// After 3 stones placed, move to "swap choice" by opponent
+		if st.InitX == 2 && st.InitO == 1 {
+			st.Phase = swap2PhaseSwapChoice
+			st.NextActor = *g.Opponent
+		}
+
+	// ---------- Opponent chooses swap / stay / add ----------
+	case "choose":
+		require(st.Phase == swap2PhaseSwapChoice, "wrong phase")
+		choice := arg1
+
+		// Event: swap choice made
+		EmitSwapChoiceMade(g.ID, *caller, choice)
+
+		switch choice {
+		case "swap":
+			// swap roles: creator <-> opponent
+			tmp := g.Creator
+			g.Creator = *g.Opponent
+			*g.Opponent = tmp
+
+			// Opening complete
+			st.Phase = swap2PhaseNone
+			clearSwap2(g.ID)
+			g.Turn = X
+
+			// Event: opening done (final roles)
+			EmitSwapPhaseComplete(g.ID, g.Creator, *g.Opponent)
+
+		case "stay":
+			// Opening complete, keep roles
+			st.Phase = swap2PhaseNone
+			clearSwap2(g.ID)
+			g.Turn = X
+
+			// Event: opening done (final roles)
+			EmitSwapPhaseComplete(g.ID, g.Creator, *g.Opponent)
+
+		case "add":
+			// Opponent must place one X and one O
+			st.Phase = swap2PhaseExtraPlace
+			st.NextActor = *g.Opponent
+			st.ExtraX, st.ExtraO = 0, 0
+			// Persist state and exit (no board change yet)
+			saveSwap2(g.ID, st)
+			saveGame(g)
+			return nil
+
+		default:
+			sdk.Abort("invalid choice")
+		}
+
+	// ---------- Opponent places extra 2 stones (one X and one O) ----------
+	case "add":
+		require(st.Phase == swap2PhaseExtraPlace, "wrong phase")
+		row := int(parseU8Fast(arg1))
+		col := int(parseU8Fast(arg2))
+		cell := parseU8Fast(arg3)
+		require(row >= 0 && row < rows && col >= 0 && col < cols, "invalid coord")
+		require(cell == 1 || cell == 2, "invalid cell")
+		require(getCell(g.Board, row, col, cols) == Empty, "cell occupied")
+
+		if cell == 1 {
+			require(st.ExtraX < 1, "extra X already placed")
+			st.ExtraX++
+			setCell(g.Board, row, col, cols, X)
+		} else {
+			require(st.ExtraO < 1, "extra O already placed")
+			st.ExtraO++
+			setCell(g.Board, row, col, cols, O)
+		}
+		g.MovesCount++
+
+		// Event: extra opening stone placed
+		EmitSwapExtraPlaced(g.ID, *caller, uint8(row), uint8(col), cell, st.ExtraX, st.ExtraO)
+
+		// Once both extra stones are placed, creator chooses final color
+		if st.ExtraX == 1 && st.ExtraO == 1 {
+			st.Phase = swap2PhaseColorChoice
+			st.NextActor = g.Creator
+		}
+
+	// ---------- Creator final color choice ----------
+	case "color":
+		require(st.Phase == swap2PhaseColorChoice, "wrong phase")
+		ch := parseU8Fast(arg1)
+		require(ch == 1 || ch == 2, "invalid color")
+
+		// Event: creator chose final color
+		EmitSwapColorChosen(g.ID, *caller, ch)
+
+		if ch == 2 {
+			// creator wants to be O -> swap roles
+			tmp := g.Creator
+			g.Creator = *g.Opponent
+			*g.Opponent = tmp
+		}
+
+		// Opening complete → normal play with X to move
+		st.Phase = swap2PhaseNone
+		clearSwap2(g.ID)
+		g.Turn = X
+
+		// Event: opening done (final roles)
+		EmitSwapPhaseComplete(g.ID, g.Creator, *g.Opponent)
+
+	default:
+		sdk.Abort("invalid swap op")
+	}
+
+	// Update last move time for any valid opening action
+	ts := *sdk.GetEnvKey("block.timestamp")
+	g.LastMoveAt = parseISO8601ToUnix(ts)
+	saveGame(g)
+
+	// Persist opening state if still active
+	if st.Phase != swap2PhaseNone {
+		saveSwap2(g.ID, st)
+	}
 	return nil
 }
 
 // ---------- Query ----------
 //
-
 // GetWaitingGames returns a comma-separated list of game IDs that are currently
 // waiting for an opponent to join.
+//
+// This function reconstructs the waiting game list from an indexed state layout:
+//   - Games are stored under keys "g:waiting:<index>"
+//   - The total number of waiting games is tracked in "g:waiting:count"
+//   - The function iterates from index 0 up to count-1, concatenating game IDs
+//     into a CSV string.
 //
 // Input:
 //
 //	This function expects an empty payload ("").
 //
-// Output Format:
+// Output:
 //
-//	"1,2,3"
-//	- A comma-separated list of game IDs.
-//	- Returns an empty string if no games are waiting.
+//	"<id1>,<id2>,<id3>"
+//
+//	- A comma-separated list of waiting game IDs.
+//	- Returns an empty string if there are no games waiting.
+//
+// Example:
+//
+//	"0,2,5"
 //
 // Returns:
 //
-//	*string containing the list of waiting game IDs.
+//	*string containing the CSV-encoded list of waiting game IDs.
+//
+//go:wasmexport g_waiting
 func GetWaitingGames(_ *string) *string {
-	return sdk.StateGetObject(waitingGamesKey)
+	count := getWaitingCount()
+	if count == 0 {
+		empty := ""
+		return &empty
+	}
+
+	var b strings.Builder
+	b.Grow(int(count * 20))
+
+	for i := uint64(0); i < count; i++ {
+		ptr := sdk.StateGetObject(waitingIndexKey(i))
+		if ptr != nil && *ptr != "" {
+			if b.Len() > 0 {
+				b.WriteByte(',')
+			}
+			b.WriteString(*ptr)
+		}
+	}
+
+	result := b.String()
+	return &result
 }
 
-// GetGame retrieves the full state of a specific game and returns its metadata
-// and board contents in a serialized ASCII format.
+// GetGame retrieves the full current state of a game, including its metadata
+// and board contents, and returns it as a single '|' delimited UTF-8 string.
+//
+// This function is compatible with all supported game types (TicTacToe,
+// ConnectFour, Gomoku). For Gomoku games using Swap2 opening rules, the board
+// reflects all moves made to date, including any placement stones played during
+// the opening phase. The Swap2 opening state itself is not included in this
+// response and must be tracked via SwapMove events or separate state queries.
 //
 // Input Format:
 //
 //	"gameId"
 //
+//	- gameId: decimal-encoded uint64 identifying the game.
+//
 // Output Format:
 //
-//	"id|type|name|creator|opponent|rows|cols|turn|moves|status|winner|betAsset|betAmount|lastMoveAt|BoardContent"
-//	  - Fields are UTF-8 text separated by '|'.
-//	  - BoardContent is raw ASCII digits appended row-wise (0=empty, 1=X, 2=O).
+// The returned string is composed of metadata fields followed by board contents,
+// delimited by '|' characters:
 //
-// Example Output (TicTacToe):
+//	id|type|name|creator|opponent|rows|cols|turn|moves|status|winner|betAsset|betAmount|lastMoveAt|BoardContent
 //
-//	"0|1|MyGame|addr_creator|addr_opponent|3|3|1|4|2|addr_creator|TOKEN|1000|1720000000|001020010"
+// Field Descriptions:
+//   - id         : uint64 game ID
+//   - type       : uint8 (1=TicTacToe, 2=ConnectFour, 3=Gomoku)
+//   - name       : game name (UTF-8 string, no '|')
+//   - creator    : address of the player assigned marker 'X'
+//   - opponent   : address of the player assigned marker 'O' (empty if none yet)
+//   - rows       : number of board rows (3, 6, or 15)
+//   - cols       : number of board columns (3, 7, or 15)
+//   - turn       : whose turn it is next (1 = X, 2 = O)
+//   - moves      : total number of moves committed to the board
+//   - status     : game status (0=WaitingForPlayer, 1=InProgress, 2=Finished)
+//   - winner     : address of the winning player (empty if none or draw)
+//   - betAsset   : token symbol of bet asset (empty if no betting)
+//   - betAmount  : bet amount per player in contract units (empty if no betting)
+//   - lastMoveAt : UNIX timestamp (seconds) when the last move was made
+//   - BoardContent : ASCII digits row-wise; each cell encoded as:
+//     '0' = empty
+//     '1' = X (creator)
+//     '2' = O (opponent)
+//
+// Example Output:
+//
+//	"7|3|GomokuMatch|hive:alice|hive:bob|15|15|1|9|1|hive:bob|HIVE|1000|1720001123|000000...<board data>..."
 //
 // Returns:
 //
-//	*string containing the encoded game data. Aborts if gameId is invalid.
+//	A pointer to the resulting string. Execution aborts if the gameId
+//	does not reference an existing game.
+//
+//go:wasmexport g_get
 func GetGame(payload *string) *string {
+
 	in := *payload
 	gameId := parseU64Fast(nextField(&in))
 	require(in == "", "to many arguments")
@@ -451,20 +767,6 @@ func GetGame(payload *string) *string {
 
 // ---------- Helpers ----------
 
-// dropDisc attempts to place a disc into the specified column for Connect Four.
-//
-// It scans from the bottom row upward to find the first available (empty) cell.
-// If a valid position is found, the disc for the current player's turn is placed.
-// If the column is full, returns -1.
-//
-// Parameters:
-//
-//	g   - pointer to the current Game state
-//	col - column index where the player wants to drop the disc
-//
-// Returns:
-//
-//	The row index where the disc landed, or -1 if the column is full.
 func dropDisc(g *Game, col int) int {
 	rows, cols := dims(g.Type)
 	for r := rows - 1; r >= 0; r-- {
@@ -476,23 +778,6 @@ func dropDisc(g *Game, col int) int {
 	return -1
 }
 
-// checkWinner determines if a move at the specified board location completes
-// the necessary sequence to win the game.
-//
-// It selects the required connect-length based on game type:
-//   - TicTacToe: 3 in a row
-//   - ConnectFour: 4 in a row
-//   - Gomoku: 5 in a row
-//
-// Parameters:
-//
-//	g   - pointer to the current Game
-//	row - row index of last move
-//	col - column index of last move
-//
-// Returns:
-//
-//	true if the move wins the game; false otherwise.
 func checkWinner(g *Game, row, col int) bool {
 	var winLen int
 	switch g.Type {
@@ -508,23 +793,6 @@ func checkWinner(g *Game, row, col int) bool {
 	return checkLineWin(g, row, col, winLen)
 }
 
-// checkLineWin checks all four directional axes (horizontal, vertical,
-// diagonal-down-right, diagonal-down-left) to determine if the required
-// number of contiguous marks (winLen) exists starting from (row, col).
-//
-// The function scans both forward and backward from the last position,
-// counting continuous marks of the same type.
-//
-// Parameters:
-//
-//	g      - pointer to the current Game
-//	row    - row index of last move
-//	col    - column index of last move
-//	winLen - number of aligned marks required to win
-//
-// Returns:
-//
-//	true if a contiguous sequence of >= winLen is found; otherwise false.
 func checkLineWin(g *Game, row, col, winLen int) bool {
 	_, cols := dims(g.Type)
 	mark := getCell(g.Board, row, col, cols)
@@ -534,7 +802,7 @@ func checkLineWin(g *Game, row, col, winLen int) bool {
 	rows, _ := dims(g.Type)
 	dirs := [][2]int{{1, 0}, {0, 1}, {1, 1}, {1, -1}}
 	for _, d := range dirs {
-		count := 1 // count the current cell
+		count := 1
 		r, c := row+d[0], col+d[1]
 		for r >= 0 && r < rows && c >= 0 && c < cols && getCell(g.Board, r, c, cols) == mark {
 			count++
@@ -554,34 +822,10 @@ func checkLineWin(g *Game, row, col, winLen int) bool {
 	return false
 }
 
-// isPlayer checks whether the given address is one of the participants in the game.
-//
-// Parameters:
-//
-//	g    - pointer to the Game struct
-//	addr - address string to verify
-//
-// Returns:
-//
-//	true if addr matches the creator or the opponent of the game; otherwise false.
 func isPlayer(g *Game, addr string) bool {
 	return addr == g.Creator || (g.Opponent != nil && addr == *g.Opponent)
 }
 
-// transferPot sends the game pot to the specified player if betting is enabled.
-//
-// If both players joined and placed equal bets, the total pot is double the
-// original bet amount. If only the creator placed a bet (opponent never joined),
-// only the creator's original stake is returned.
-//
-// Parameters:
-//
-//	g      - pointer to the Game struct containing bet state
-//	sendTo - address string to receive the pot
-//
-// Note:
-//
-//	This function assumes that HiveDraw was already called to escrow the bet.
 func transferPot(g *Game, sendTo string) {
 	if g.GameAsset != nil && g.GameBetAmount != nil {
 		amt := *g.GameBetAmount
@@ -592,107 +836,9 @@ func transferPot(g *Game, sendTo string) {
 	}
 }
 
-// splitPot divides the game pot equally between both players in the case of a draw.
-//
-// Each player receives exactly their original bet amount back. This function only applies
-// when betting is enabled AND an opponent has already joined.
-//
-// Parameters:
-//
-//	g - pointer to the Game object containing bet details
-//
-// Note:
-//   - This function assumes both players deposited matching bets.
-//   - If called when no opponent is present, it silently does nothing (no split possible).
 func splitPot(g *Game) {
 	if g.GameAsset != nil && g.GameBetAmount != nil && g.Opponent != nil {
 		sdk.HiveTransfer(sdk.Address(g.Creator), *g.GameBetAmount, *g.GameAsset)
 		sdk.HiveTransfer(sdk.Address(*g.Opponent), *g.GameBetAmount, *g.GameAsset)
 	}
-}
-
-// ---- waiting list ------
-
-const waitingGamesKey = "g:waiting"
-
-// addGameToWaitingList adds the given game ID into the state-managed waiting list
-// of games that are open for other players to join.
-//
-// Behavior:
-//   - If the waiting list is empty, it initializes it with the new game ID.
-//   - Otherwise, it appends the new ID using CSV format.
-//
-// Parameters:
-//
-//	gameId - the unique identifier of the newly created game
-func addGameToWaitingList(gameId uint64) {
-	gameString := UInt64ToString(gameId)
-	existing := sdk.StateGetObject(waitingGamesKey)
-	if existing != nil && *existing != "" {
-		newVal := *existing + "," + gameString
-		sdk.StateSetObject(waitingGamesKey, newVal)
-	} else {
-		sdk.StateSetObject(waitingGamesKey, gameString)
-	}
-}
-
-// removeGameFromWaitingList removes the specified game ID from the waiting list.
-//
-// It updates the stored CSV string in state. If the game ID
-// does not exist in the waiting list, this function aborts.
-//
-// Parameters:
-//
-//	gameId - the ID of the game to remove
-//
-// Returns:
-//
-//	nil upon success (for compatibility with exported function signatures).
-func removeGameFromWaitingList(gameId uint64) *string {
-	gameString := UInt64ToString(gameId)
-	existing := sdk.StateGetObject(waitingGamesKey)
-	newCSV := removeFromCSV(*existing, gameString)
-	sdk.StateSetObject(waitingGamesKey, newCSV)
-	return nil
-}
-
-// removeFromCSV removes a target value from a comma-separated list.
-//
-// It scans through the CSV string and rebuilds it without the target.
-// If the target is not found, an abort is triggered (ensuring state consistency).
-//
-// Parameters:
-//
-//	csv    - an input string of comma-separated values
-//	target - the value to remove
-//
-// Returns:
-//
-//	A new CSV string without the target value.
-//
-// Invariants:
-//   - The resulting string contains no trailing commas.
-//   - If the target is not present, the function will abort execution.
-func removeFromCSV(csv string, target string) string {
-	start := 0
-	found := false
-	b := make([]byte, 0, len(csv))
-	for i := 0; i <= len(csv); i++ {
-		if i == len(csv) || csv[i] == ',' {
-			part := csv[start:i]
-			if part == target {
-				found = true
-			} else {
-				if len(b) > 0 {
-					b = append(b, ',')
-				}
-				b = append(b, part...)
-			}
-			start = i + 1
-		}
-	}
-	if !found {
-		sdk.Abort("game not found")
-	}
-	return string(b)
 }
