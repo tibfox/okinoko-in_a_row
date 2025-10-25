@@ -206,9 +206,13 @@ g_move:   "0|10|7"  ← First normal move (Bob plays X)
 | Limit   | Bet amount (float) |
 
 ✅ Bet is locked when creating or joining
+
 ✅ Winner takes full pot
+
 ✅ Draw splits pot evenly
+
 ❌ No rake taken by contract (player-first model)
+
 
 > Players may support development voluntarily
 
