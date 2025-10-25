@@ -177,8 +177,8 @@ func ClaimTimeout(payload *string) *string {
 	ts := *sdk.GetEnvKey("block.timestamp")
 	now := parseISO8601ToUnix(ts)
 	timeoutAt := g.LastMoveAt + gameTimeout
-	timeoutISO := unixToISO8601(timeoutAt)
-	require(now >= timeoutAt, ts+": timeout not reached. Expires at: "+timeoutISO)
+	timeoutISO := unixToISO8601(timeoutAt + 1)
+	require(now > timeoutAt, ts+": timeout not reached. Expires at: "+timeoutISO)
 
 	var winner *string
 	if g.Turn == X {

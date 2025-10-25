@@ -127,8 +127,8 @@ func TestTTTPlayGameTimeout(t *testing.T) {
 		[]contracts.Intent{{Type: "transfer.allow", Args: map[string]string{"limit": "1.000", "token": "hive"}}},
 		"hive:someoneelse", true, uint(1_000_000_000), "", nil)
 
-	CallContract(t, ct, "g_move", []byte("0|1|1"), nil, "hive:someone", true, uint(1_000_000_000), "", toStringPtr("2025-09-03T00:00:00"))
-	CallContract(t, ct, "g_timeout", []byte("0"), nil, "hive:someone", true, uint(1_000_000_000), "", toStringPtr("2025-09-10T00:00:01"))
+	CallContract(t, ct, "g_move", []byte("0|1|1"), nil, "hive:someone", true, uint(1_000_000_000), "", toStringPtr("2025-09-03T00:00:01"))
+	CallContract(t, ct, "g_timeout", []byte("0"), nil, "hive:someone", true, uint(1_000_000_000), "", toStringPtr("2025-09-10T00:00:02"))
 
 	CallContract(t, ct, "g_get", []byte("0"), nil, "hive:someone", true, uint(1_000_000_000), "", nil)
 }
