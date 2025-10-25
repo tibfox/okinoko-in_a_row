@@ -1,133 +1,272 @@
-# Multi-Game Smart Contract (Tic-Tac-Toe, Connect Four, Gomoku)
+# 🎮 Ōkinoko In-A-Row: On-Chain Turn-Based Game Engine (TicTacToe, ConnectFour, Gomoku)
 
-This contract allows players to create, join, and play **Tic-Tac-Toe**, **Connect Four**, and **Gomoku** games on-chain. Bets can optionally be attached, and the contract handles moves, wins, draws, and payouts automatically.
+This contract implements a fully on-chain, turn-based board game engine that supports **Tic-Tac-Toe**, **Connect Four**, and **Gomoku**, including optional **betting using token transfer intents** on the [vsc ecosystem](https://github.com/vsc-eco/).
 
----
-
-## Game Types
-
-| Game Type    | ID | Board Size | Winning Line Length |
-| ------------ | -- | ---------- | ------------------- |
-| Tic-Tac-Toe  | 1  | 3×3        | 3                   |
-| Connect Four | 2  | 6×7        | 4                   |
-| Gomoku       | 3  | 15×15      | 5                   |
+Players interact via WASM-exported functions, sending human-readable strings as payloads. All game state is maintained on-chain, with turn enforcement, timeouts, betting, victory detection, resignation logic, and querying functions. Game workflow and lobby will soon be available on the [Ōkinoko Terminal](https://terminal.okinoko.io/).
 
 ---
 
-## Quick Start
+## 📦 **Supported Game Types**
 
-### 1. Create a Game
+| Value | Game        | Board Size | Win Condition             |
+| ----- | ----------- | ---------- | ------------------------- |
+| 1     | [TicTacToe](https://en.wikipedia.org/wiki/Tic-tac-toe)   | 3x3        | 3 in a row                |
+| 2     | [ConnectFour](https://en.wikipedia.org/wiki/Connect_Four) | 6x7        | 4 in a row (gravity drop) |
+| 3     | [Gomoku](https://en.wikipedia.org/wiki/Gomoku)      | 15x15      | 5 in a row                |
 
-Call `createGame` with a **name** and **game type**. Optionally attach a bet via transaction intents.
+---
 
-**Example Payload:**
+# 🚀 Exported Entry Points (Public API)
 
-```json
-{
-  "name": "Fun Match",
-  "type": 1
-}
+Each exported function accepts a string, where fields are separated by `|`. Inputs and outputs are plain UTF-8 text.
+
+---
+
+## 👉 1. **Create Game**
+
+**Export name:** `g_create`
+**Signature:** `func CreateGame(payload *string) *string`
+
+### **Input Format**
+
+```
+"type|name"
 ```
 
-**Returns:** `nil`. Event `GameCreated` is emitted with the new game ID.
+* `type`: `1` | `2` | `3`
+* `name`: Human-readable string, must not contain `|`
+
+### **Optional Betting**
+
+To place a bet, the caller must provide a `transfer.allow` intent with selected asset (`hive` or `hbd`) and a limit.
+
+### **Returns**
+
+* `<gameId>` on success
 
 ---
 
-### 2. Join a Game
+## 👉 2. **Join Game**
 
-Call `joinGame(gameId)` to join a waiting game.
+**Export name:** `g_join`
+**Signature:** `func JoinGame(payload *string) *string`
 
-* Creator cannot join their own game.
-* Bets must match exactly if one exists.
+### **Input Format**
 
----
-
-### 3. Make a Move
-
-Call `makeMove(gameId, row, col)` to place your mark.
-
-* **Tic-Tac-Toe / Gomoku:** specify row & column.
-* **Connect Four:** specify column; the disc drops to the lowest empty row.
-
-**Rules enforced:**
-
-* Only the current player can make a move.
-* Cell must be empty (or column must have space for Connect Four).
-
----
-
-### 4. Game Completion
-
-* Contract automatically checks for a win or draw after each move.
-* Payouts occur automatically:
-
-  * Winner receives the pot.
-  * Draw splits the pot equally.
-
----
-
-### 5. Timeout & Resign
-
-* **Timeout:** If a player doesn’t move for 7 days, the opponent can claim a win by calling `claimTimeout(gameId)`.
-* **Resign:** A player can forfeit by calling `resign(gameId)`; the other player wins automatically.
-
----
-
-### 6. Check Game State
-
-Call `getGame(gameId)` to retrieve the full game state:
-
-**Example Response:**
-
-```json
-{
-  "id": 1,
-  "type": 1,
-  "typeName": "TicTacToe",
-  "name": "Fun Match",
-  "creator": "addr1",
-  "opponent": "addr2",
-  "board": [0,1,0,2,0,0,0,0,0],
-  "rows": 3,
-  "cols": 3,
-  "turn": 1,
-  "moves_count": 3,
-  "status": 1,
-  "winner": null,
-  "gameAsset": null,
-  "gameBetAmount": null,
-  "lastMoveAt": "2025-09-26T20:45:00Z"
-}
+```
+"gameId"
 ```
 
-* `board` stores the game cells as 2-bit packed values (0 = empty, 1 = X, 2 = O).
-* `turn` indicates the next player (`1 = X`, `2 = O`).
-* `status` = 0 (waiting), 1 (in progress), 2 (finished).
+If the game has an existing bet, the joining player must match it with a transfer intent.
+
+### **Returns**
+
+* `nil` on success
 
 ---
 
-### 7. Bets
+## 👉 3. **Make Move**
 
-* Supported via `sdk.Asset` and amount in `GameBetAmount`.
-* Automatically handled for winner or split in case of draw.
+**Export name:** `g_move`
+**Signature:** `func MakeMove(payload *string) *string`
+
+### **Input Format**
+
+```
+"gameId|row|col"
+```
+
+For Connect Four, `row` is ignored by the caller; the contract computes it.
+
+### **Game Rules Enforced**
+
+* Must be the caller’s turn
+* Position must be valid and unoccupied
+* Automatically checks win or draw
+* Transfers pot to winner (if betting enabled)
+
+### **Returns**
+
+* `nil` on success
 
 ---
 
-### 8. Events
+## 👉 4. **Claim Timeout**
 
-* **GameCreated(gameId, creator)**
-* **GameJoined(gameId, joiner)**
-* **GameMoveMade(gameId, player, position)**
-* **GameWon(gameId, winner)**
-* **GameDraw(gameId)**
-* **GameResigned(gameId, player)**
+**Export name:** `g_timeout`
+**Signature:** `func ClaimTimeout(payload *string) *string`
 
-These events can be used to track game progress off-chain.
+### **Input Format**
+
+```
+"gameId"
+```
+
+If the opposing player has not made a move within 7 days, the caller may claim a win.
+
+### **Rules**
+
+* Only the waiting player may call
+* Betting pot is transferred to winner
+
+### **Returns**
+
+* `nil` on success
 
 ---
 
-### Notes
+## 👉 5. **Resign**
 
-* Each game board is stored **efficiently** as a `[]byte` with 2 bits per cell.
-* Maximum board size: 15×15 for Gomoku.
-* Supports multiple games simultaneously.
+**Export name:** `g_resign`
+**Signature:** `func Resign(payload *string) *string`
+
+### **Input Format**
+
+```
+"gameId"
+```
+
+A player may resign at any time:
+
+* If no opponent has joined, the game is simply removed
+* If opponent exists, the opponent automatically wins
+
+### **Returns**
+
+* `nil` on success
+
+---
+
+## 🔍 Query Functions
+
+### **6. Get Game State**
+
+**Export name:** `g_get`
+**Signature:** `func GetGame(payload *string) *string`
+
+#### Input:
+
+```
+"gameId"
+```
+
+#### Output Format:
+
+```
+"id|type|name|creator|opponent|rows|cols|turn|moves|status|winner|betAsset|betAmount|lastMoveAt|BoardContent"
+```
+
+* `BoardContent`: ASCII digits representing each cell (`0=empty`, `1=X`, `2=O`)
+* Rows are appended row-by-row, no separators
+
+---
+
+### **7. List Waiting Games**
+
+**Export name:** `g_waiting`
+**Signature:** `func GetWaitingGames(_ *string) *string`
+
+#### Output:
+
+```
+"1,2,3"
+```
+
+Comma-separated list of game IDs awaiting opponents.
+
+---
+
+# 🔐 Timeout Rules
+
+* Timeout period: **7 days**
+* Calculated from `LastMoveAt`
+* Only the player *waiting for the opponent’s move* can claim a timeout
+
+---
+
+# 💸 Betting via Transfer Intents
+
+| Field | Meaning                 |
+| ----- | ----------------------- |
+| token | Must be `hive` or `hbd` |
+| limit | Decimal amount (float)  |
+
+* First player’s bet is deducted on game creation.
+* Second player must match bet when joining.
+* Winner receives entire pot.
+* In a draw, pot is split evenly.
+
+---
+
+# ⚙ Status Codes
+
+| Status Value | Meaning            |
+| ------------ | ------------------ |
+| 0            | Waiting for player |
+| 1            | In progress        |
+| 2            | Finished           |
+
+| Turn Value | Player       |
+| ---------- | ------------ |
+| 1          | X (creator)  |
+| 2          | O (opponent) |
+
+---
+
+# 📄 Example API Usage
+
+### 🎯 Create TicTacToe Game
+
+Input:
+
+```
+"1|My First Game"
+```
+
+Output:
+
+```
+"5"
+```
+
+### 🎯 Join Game with ID 5
+
+Input:
+
+```
+"5"
+```
+
+### 🎯 Make Move to Row 1, Col 2
+
+Input:
+```
+"5|1|2"
+```
+
+
+### 🎯 Retrieve Game State
+
+Input:
+
+```
+"5"
+```
+
+Output:
+
+```
+"5|1|My First Game|hive:alice|hive:bob|3|3|2|5|2|hive:alice|hive|1000|1720000000|111020200"
+
+```
+for this game board: 
+```
+X | X | X
+O |   |  
+O |   |  
+```
+
+
+## 📜 License
+
+This project is licensed under the [MIT License](LICENSE).

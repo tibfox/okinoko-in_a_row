@@ -14,6 +14,7 @@ func TestCreateGames(t *testing.T) {
 	CallContract(t, ct, "g_get", []byte("1"), nil, "hive:someone", true, uint(1_000_000_000), "", nil)
 	CallContract(t, ct, "g_create", []byte("3|Gomoku"), nil, "hive:someone", true, uint(1_000_000_000), "", nil)
 	CallContract(t, ct, "g_get", []byte("2"), nil, "hive:someone", true, uint(1_000_000_000), "", nil)
+	CallContract(t, ct, "g_waiting", []byte(""), nil, "hive:someone", true, uint(1_000_000_000), "0,1,2", nil)
 }
 
 func TestJoinGame(t *testing.T) {
