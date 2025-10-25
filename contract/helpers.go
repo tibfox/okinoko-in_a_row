@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
-	"time"
 	"vsc_tictactoe/sdk"
 )
 
@@ -18,17 +17,6 @@ func ToJSON[T any](v T, objectType string) string {
 		sdk.Abort("failed to marshal " + objectType)
 	}
 	return string(b)
-}
-
-// FromJSON unmarshals a JSON string into a Go value of type T.
-// Aborts execution if unmarshalling fails.
-func FromJSON[T any](data string, objectType string) *T {
-	var v T
-	if err := json.Unmarshal([]byte(data), &v); err != nil {
-		sdk.Abort(
-			fmt.Sprintf("failed to unmarshal %s \ninput: %s\nerror: %v", objectType, data, err.Error()))
-	}
-	return &v
 }
 
 // ---------- String/Number Helpers ----------
@@ -115,29 +103,109 @@ func setGameCount(newCount uint64) {
 	sdk.StateSetObject("g:count", UInt64ToString(newCount))
 }
 
-// ---------- Timestamp Helpers ----------
-
-// parseTimestamp parses a timestamp in "YYYY-MM-DDTHH:MM:SS" format as UTC.
-// Aborts if parsing fails.
-func parseTimestamp(ts string) time.Time {
-	t, err := time.ParseInLocation("2006-01-02T15:04:05", ts, time.UTC)
-	if err != nil {
-		sdk.Abort("invalid timestamp: " + ts)
+// Converts compressed board (2 bits per cell) into ASCII string:
+// '0' = unset, '1' = creator (X), '2' = joiner (O)
+func boardToASCII(g *Game) string {
+	rows, cols := dims(g.Type)
+	total := rows * cols
+	out := make([]byte, total)
+	for i := 0; i < total; i++ {
+		byteIdx := i / 4
+		bitShift := (i % 4) * 2
+		cell := (g.Board[byteIdx] >> bitShift) & 0x03
+		out[i] = '0' + cell // converts 0 → '0', 1 → '1', 2 → '2'
 	}
-	return t
+	return string(out)
 }
 
-// currentTimestampString retrieves the current block timestamp from the environment.
-// Aborts if the timestamp is not available.
-func currentTimestampString() string {
-	ts := sdk.GetEnvKey("block.timestamp")
-	if ts == nil {
-		sdk.Abort("block.timestamp not found")
+// date conversions
+
+// Converts UNIX timestamp (seconds) to "YYYY-MM-DDThh:mm:ss" (UTC, no 'Z')
+// Pure integer math; no allocations beyond the fixed 19-byte buffer.
+func unixToISO8601(ts uint64) string {
+	// Split into day + time (use int64 consistently)
+	days := int64(ts / 86400)
+	sec := int64(ts % 86400)
+	hour := sec / 3600
+	sec %= 3600
+	minute := sec / 60
+	second := sec % 60
+
+	// Howard Hinnant's civil_from_days (reversible, leap-safe)
+	z := days + 719468
+	var era int64
+	if z >= 0 {
+		era = z / 146097
+	} else {
+		era = (z - 146096) / 146097
 	}
-	return *ts
+	doe := z - era*146097                                  // [0, 146096]
+	yoe := (doe - doe/1460 + doe/36524 - doe/146096) / 365 // [0, 399]
+	y := yoe + era*400
+	doy := doe - (365*yoe + yoe/4 - yoe/100 + yoe/400) // [0, 365]
+	mp := (5*doy + 2) / 153                            // [0, 11]
+	d := doy - (153*mp+2)/5 + 1                        // [1, 31]
+	m := mp + 3 - 12*((mp+3)/13)                       // [1, 12]
+	y += (mp + 3) / 13
+
+	year := int(y)
+	month := int(m)
+	day := int(d)
+
+	// Format "YYYY-MM-DDThh:mm:ss" into a fixed-size buffer
+	var buf [19]byte
+
+	// Year (4 digits)
+	buf[0] = '0' + byte((year/1000)%10)
+	buf[1] = '0' + byte((year/100)%10)
+	buf[2] = '0' + byte((year/10)%10)
+	buf[3] = '0' + byte(year%10)
+
+	buf[4] = '-'
+
+	// Month (2 digits)
+	buf[5] = '0' + byte((month/10)%10)
+	buf[6] = '0' + byte(month%10)
+
+	buf[7] = '-'
+
+	// Day (2 digits)
+	buf[8] = '0' + byte((day/10)%10)
+	buf[9] = '0' + byte(day%10)
+
+	buf[10] = 'T'
+
+	// Hour (2 digits)
+	h := int(hour)
+	buf[11] = '0' + byte((h/10)%10)
+	buf[12] = '0' + byte(h%10)
+
+	buf[13] = ':'
+
+	// Minute (2 digits)
+	min := int(minute)
+	buf[14] = '0' + byte((min/10)%10)
+	buf[15] = '0' + byte(min%10)
+
+	buf[16] = ':'
+
+	// Second (2 digits)
+	sec2 := int(second)
+	buf[17] = '0' + byte((sec2/10)%10)
+	buf[18] = '0' + byte(sec2%10)
+
+	return string(buf[:])
 }
 
-// currentTimestamp parses and returns the current block timestamp as time.Time (UTC).
-func currentTimestamp() time.Time {
-	return parseTimestamp(currentTimestampString())
+// Parse "YYYY-MM-DDThh:mm:ss" into UNIX seconds
+func parseISO8601ToUnix(s string) uint64 {
+	year := strToUint16Fast(s[0:4])
+	month := strToUint8Fast(s[5:7])
+	day := strToUint8Fast(s[8:10])
+	hour := strToUint8Fast(s[11:13])
+	minute := strToUint8Fast(s[14:16])
+	second := strToUint8Fast(s[17:19])
+
+	days := daysSinceUnixEpoch(year, month, day)
+	return days*86400 + uint64(hour)*3600 + uint64(minute)*60 + uint64(second)
 }
