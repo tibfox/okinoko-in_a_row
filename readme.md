@@ -205,6 +205,7 @@ g_move:   "0|10|7"  ← First normal move (Bob plays X)
 | Token   | `hive` or `hbd`    |
 | Limit   | Bet amount (float) |
 
+
 ✅ Bet is locked when creating or joining
 
 ✅ Winner takes full pot
