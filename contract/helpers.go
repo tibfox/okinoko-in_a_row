@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 	"vsc_tictactoe/sdk"
 )
 
@@ -208,4 +209,107 @@ func parseISO8601ToUnix(s string) uint64 {
 
 	days := daysSinceUnixEpoch(year, month, day)
 	return days*86400 + uint64(hour)*3600 + uint64(minute)*60 + uint64(second)
+}
+
+// ---------- Fast human-ABI helpers ----------
+
+func nextField(s *string) string {
+	i := strings.IndexByte(*s, '|')
+	if i < 0 {
+		f := *s
+		*s = ""
+		return f
+	}
+	f := (*s)[:i]
+	*s = (*s)[i+1:]
+	return f
+}
+
+// decimal -> uint with no error path; assume valid ASCII digits
+func parseU64Fast(s string) uint64 {
+	var n uint64
+	for i := 0; i < len(s); i++ {
+		n = n*10 + uint64(s[i]-'0')
+	}
+	return n
+}
+
+func parseU8Fast(s string) uint8 {
+	var n uint8
+	for i := 0; i < len(s); i++ {
+		n = n*10 + uint8(s[i]-'0')
+	}
+	return n
+}
+
+// decimal formatting (uint -> ascii) with no allocations beyond dst growth
+func appendU64(dst []byte, v uint64) []byte {
+	if v == 0 {
+		return append(dst, '0')
+	}
+	var buf [20]byte
+	i := len(buf)
+	for v > 0 {
+		i--
+		buf[i] = byte('0' + v%10)
+		v /= 10
+	}
+	return append(dst, buf[i:]...)
+}
+func appendU16(dst []byte, v uint16) []byte { return appendU64(dst, uint64(v)) }
+func appendU8(dst []byte, v uint8) []byte   { return appendU64(dst, uint64(v)) }
+
+// ----- conversion helpers --------
+// Convert string of digits to uint16 (no errors assumed)
+func strToUint16Fast(s string) uint16 {
+	var n uint16
+	for i := 0; i < len(s); i++ {
+		n = n*10 + uint16(s[i]-'0')
+	}
+	return n
+}
+
+// Convert string of digits to uint8 (no errors assumed)
+func strToUint8Fast(s string) uint8 {
+	var n uint8
+	for i := 0; i < len(s); i++ {
+		n = n*10 + uint8(s[i]-'0')
+	}
+	return n
+}
+
+// Checks if a given year is a leap year
+func isLeapYear(year uint16) bool {
+	y := int(year)
+	return (y%4 == 0 && y%100 != 0) || (y%400 == 0)
+}
+
+// Days from 1970-01-01 to the given date (UTC)
+func daysSinceUnixEpoch(year uint16, month uint8, day uint8) uint64 {
+	// Years since epoch
+	y := int(year) - 1970
+	// Add days for all prior years
+	days := uint64(y * 365)
+
+	// Add leap days
+	// Equivalent to: floor((year-1969)/4) - floor((year-1901)/100) + floor((year-1601)/400)
+	days += uint64((y+2)/4 - (y+70)/100 + (y+370)/400)
+
+	// Month lengths
+	var monthDays = [12]uint8{31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31}
+	for i := uint8(1); i < month; i++ {
+		days += uint64(monthDays[i-1])
+		if i == 2 && isLeapYear(year) { // Add leap day after February
+			days++
+		}
+	}
+
+	// Add days in current month (subtract 1 because the epoch day is day 1)
+	return days + uint64(day-1)
+}
+
+func require(cond bool, msg string) {
+	if !cond {
+		sdk.Abort(msg)
+	}
 }
