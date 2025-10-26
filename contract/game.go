@@ -84,6 +84,9 @@ type Game struct {
 	Phase         GamePhase     // Tracks Swap2 opening phases for Gomoku
 	SwapPending   bool          // Whether we are waiting for swap decision
 	InitialMoves  []OpeningMove // Stores opening stones
+	PlayerX       string        // always non-nil; starts as Creator
+	PlayerO       *string       // nil until opponent joins
+
 }
 
 // GamePhase defines the current play phase, used for Gomoku Swap2.
@@ -189,6 +192,18 @@ func encodeGame(g *Game) []byte {
 	} else {
 		w8(0)
 	}
+
+	// PlayerX (always exists)
+	writeStr(g.PlayerX)
+
+	// PlayerO (optional)
+	if g.PlayerO != nil {
+		w8(1)
+		writeStr(*g.PlayerO)
+	} else {
+		w8(0)
+	}
+
 	if g.GameAsset != nil {
 		w8(1)
 		writeStr(g.GameAsset.String())
@@ -233,6 +248,17 @@ func decodeGame(b []byte) *Game {
 		ww := r.str()
 		g.Winner = &ww
 	}
+	// PlayerX (always stored as string)
+	g.PlayerX = r.str()
+
+	// PlayerO (optional)
+	if r.u8() == 1 {
+		po := r.str()
+		g.PlayerO = &po
+	} else {
+		g.PlayerO = nil
+	}
+
 	if r.u8() == 1 {
 		ast := sdk.Asset(r.str())
 		g.GameAsset = &ast
@@ -437,8 +463,6 @@ func saveSwap2(id uint64, st *swap2State) {
 func clearSwap2(id uint64) {
 	sdk.StateSetObject(swap2Key(id), "")
 }
-
-// ---- Waiting list ------
 
 // ---- waiting list ------
 

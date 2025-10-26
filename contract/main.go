@@ -97,6 +97,8 @@ func CreateGame(payload *string) *string {
 		Status:     WaitingForPlayer,
 		LastMoveAt: parseISO8601ToUnix(ts), // store timestamp as unix time
 	}
+	g.PlayerX = g.Creator
+	g.PlayerO = nil
 
 	// Optional betting via the first transfer intent (if provided by caller)
 	if ta := GetFirstTransferAllow(sdk.GetEnv().Intents); ta != nil {
@@ -148,7 +150,9 @@ func JoinGame(payload *string) *string {
 		sdk.HiveDraw(amt, ta.Token) // withdraw opponent's matching bet
 	}
 
-	g.Opponent = sender             // set opponent address
+	g.Opponent = sender // set opponent address
+	g.PlayerO = sender
+
 	g.Status = InProgress           // game begins (Gomoku opening handled via g_swap)
 	saveGame(g)                     // persist updated game state
 	removeGameFromWaitingList(g.ID) // remove from waiting pool
@@ -210,10 +214,12 @@ func MakeMove(payload *string) *string {
 
 	// Determine whether the caller is X or O
 	var mark Cell
-	if *sender == g.Creator {
+	if *sender == g.PlayerX {
 		mark = X
-	} else {
+	} else if g.PlayerO != nil && *sender == *g.PlayerO {
 		mark = O
+	} else {
+		sdk.Abort("invalid player")
 	}
 	require(mark == g.Turn, "not your turn")
 
@@ -239,15 +245,18 @@ func MakeMove(payload *string) *string {
 	// Update timestamp of last move
 	ts := *sdk.GetEnvKey("block.timestamp")
 	g.LastMoveAt = parseISO8601ToUnix(ts)
+	EmitGameMoveMade(g.ID, *sender, uint8(row*cols+col))
 
 	// Check if this move wins the game
 	if checkWinner(g, row, col) {
 		// Determine winner's address pointer
 		if mark == X {
-			g.Winner = &g.Creator
+			winnerAddress := g.PlayerX
+			g.Winner = &winnerAddress
 		} else {
-			g.Winner = g.Opponent
+			g.Winner = g.PlayerO
 		}
+
 		g.Status = Finished
 		if g.GameBetAmount != nil {
 			transferPot(g, *g.Winner) // send full pot to winner
@@ -308,12 +317,20 @@ func ClaimTimeout(payload *string) *string {
 		if st := loadSwap2(g.ID); st != nil && st.Phase != swap2PhaseNone {
 			// Opening: winner is the opposite of NextActor
 			var winner string
-			if st.NextActor == g.Creator && g.Opponent != nil {
-				winner = *g.Opponent
+			// During Swap2, the "next" actor is stored in st.NextActor.
+			// Whoever is NOT the next actor wins.
+			if st.NextActor == g.PlayerX {
+				// It is X's turn, so O wins
+				if g.PlayerO != nil {
+					winner = *g.PlayerO
+				} else {
+					sdk.Abort("swap2 timeout: PlayerO not initialized")
+				}
 			} else {
-				winner = g.Creator
+				// It is O's turn, so X wins
+				winner = g.PlayerX
 			}
-			require(*sender == winner, "only opponent can claim timeout")
+			require(*sender == winner, "only winning player can claim timeout")
 			g.Winner = &winner
 			g.Status = Finished
 			g.LastMoveAt = now
@@ -330,10 +347,12 @@ func ClaimTimeout(payload *string) *string {
 	// Normal play timeout logic
 	var winner *string
 	if g.Turn == X {
-		winner = g.Opponent
+		winner = g.PlayerO
 	} else {
-		winner = &g.Creator
+		w := g.PlayerX
+		winner = &w
 	}
+	require(winner != nil, "timeout: playerO not initialized")
 	require(*sender == *winner, "only opponent can claim timeout")
 
 	g.Winner = winner
@@ -381,11 +400,13 @@ func Resign(payload *string) *string {
 		removeGameFromWaitingList(g.ID)
 	} else {
 		// Game is active: determine winner based on who resigns
-		if *sender == g.Creator {
-			g.Winner = g.Opponent
+		if *sender == g.PlayerX {
+			g.Winner = g.PlayerO
 		} else {
-			g.Winner = &g.Creator
+			w := g.PlayerX
+			g.Winner = &w
 		}
+
 		if g.GameBetAmount != nil {
 			transferPot(g, *g.Winner) // winner receives full pot
 		}
@@ -429,14 +450,14 @@ func SwapMove(payload *string) *string {
 	in := *payload
 	gameID := parseU64Fast(nextField(&in))
 	op := nextField(&in)
-	arg1 := nextField(&in) // reused depending on op
-	arg2 := nextField(&in) // reused depending on op
-	arg3 := nextField(&in) // reused depending on op
-	require(in == "", "to many arguments")
+	arg1 := nextField(&in)
+	arg2 := nextField(&in)
+	arg3 := nextField(&in)
+	require(in == "", "too many arguments")
 
 	g := loadGame(gameID)
 	require(g.Type == Gomoku, "swap only for gomoku")
-	require(g.Opponent != nil, "opponent required")
+	require(g.Opponent != nil && g.PlayerO != nil, "opponent required")
 	require(g.Status == InProgress, "game not in progress")
 
 	st := loadSwap2(g.ID)
@@ -449,12 +470,12 @@ func SwapMove(payload *string) *string {
 
 	switch op {
 
-	// ---------- Opening placements (first 3 stones by creator) ----------
+	// ---------- Opening: Creator places 2 X and 1 O ----------
 	case "place":
 		require(st.Phase == swap2PhaseOpening, "wrong phase")
 		row := int(parseU8Fast(arg1))
 		col := int(parseU8Fast(arg2))
-		cell := parseU8Fast(arg3)
+		cell := parseU8Fast(arg3) // 1 = X, 2 = O
 		require(row >= 0 && row < rows && col >= 0 && col < cols, "invalid coord")
 		require(cell == 1 || cell == 2, "invalid cell")
 		require(getCell(g.Board, row, col, cols) == Empty, "cell occupied")
@@ -469,54 +490,56 @@ func SwapMove(payload *string) *string {
 			setCell(g.Board, row, col, cols, O)
 		}
 		g.MovesCount++
+		EmitSwapOpeningPlaced(g.ID, *caller, uint8(row), uint8(col), uint8(cell), st.InitX, st.InitO)
 
-		// Event: one opening stone placed
-		EmitSwapOpeningPlaced(g.ID, *caller, uint8(row), uint8(col), cell, st.InitX, st.InitO)
-
-		// After 3 stones placed, move to "swap choice" by opponent
 		if st.InitX == 2 && st.InitO == 1 {
 			st.Phase = swap2PhaseSwapChoice
-			st.NextActor = *g.Opponent
+			st.NextActor = *g.PlayerO // Opponent chooses
 		}
+
+		// persist state
+		saveSwap2(g.ID, st)
+		saveGame(g)
+		return nil
 
 	// ---------- Opponent chooses swap / stay / add ----------
 	case "choose":
 		require(st.Phase == swap2PhaseSwapChoice, "wrong phase")
 		choice := arg1
-
-		// Event: swap choice made
 		EmitSwapChoiceMade(g.ID, *caller, choice)
 
 		switch choice {
 		case "swap":
-			// swap roles: creator <-> opponent
-			tmp := g.Creator
-			g.Creator = *g.Opponent
-			*g.Opponent = tmp
+			// Swap roles only
+			temp := g.PlayerX
+			g.PlayerX = *g.PlayerO
+			*g.PlayerO = temp
 
-			// Opening complete
+			// Exit opening phase
 			st.Phase = swap2PhaseNone
 			clearSwap2(g.ID)
 			g.Turn = X
 
-			// Event: opening done (final roles)
-			EmitSwapPhaseComplete(g.ID, g.Creator, *g.Opponent)
+			saveGame(g)
+			EmitSwapPhaseComplete(g.ID, g.PlayerX, *g.PlayerO)
+			return nil
 
 		case "stay":
-			// Opening complete, keep roles
+			// Keep roles, just exit phase
 			st.Phase = swap2PhaseNone
 			clearSwap2(g.ID)
 			g.Turn = X
 
-			// Event: opening done (final roles)
-			EmitSwapPhaseComplete(g.ID, g.Creator, *g.Opponent)
+			saveGame(g)
+			EmitSwapPhaseComplete(g.ID, g.PlayerX, *g.PlayerO)
+			return nil
 
 		case "add":
-			// Opponent must place one X and one O
+			// Move to extra placement phase (opponent places two stones)
 			st.Phase = swap2PhaseExtraPlace
-			st.NextActor = *g.Opponent
+			st.NextActor = *g.PlayerO
 			st.ExtraX, st.ExtraO = 0, 0
-			// Persist state and exit (no board change yet)
+
 			saveSwap2(g.ID, st)
 			saveGame(g)
 			return nil
@@ -525,7 +548,7 @@ func SwapMove(payload *string) *string {
 			sdk.Abort("invalid choice")
 		}
 
-	// ---------- Opponent places extra 2 stones (one X and one O) ----------
+	// ---------- Extra placements (opponent places 1 X and 1 O) ----------
 	case "add":
 		require(st.Phase == swap2PhaseExtraPlace, "wrong phase")
 		row := int(parseU8Fast(arg1))
@@ -546,52 +569,46 @@ func SwapMove(payload *string) *string {
 		}
 		g.MovesCount++
 
-		// Event: extra opening stone placed
-		EmitSwapExtraPlaced(g.ID, *caller, uint8(row), uint8(col), cell, st.ExtraX, st.ExtraO)
+		EmitSwapExtraPlaced(g.ID, *caller, uint8(row), uint8(col), uint8(cell), st.ExtraX, st.ExtraO)
 
-		// Once both extra stones are placed, creator chooses final color
+		// Once two extra stones placed → creator chooses color
 		if st.ExtraX == 1 && st.ExtraO == 1 {
 			st.Phase = swap2PhaseColorChoice
 			st.NextActor = g.Creator
 		}
 
-	// ---------- Creator final color choice ----------
+		saveSwap2(g.ID, st)
+		saveGame(g)
+		return nil
+
+	// ---------- Creator chooses final color ----------
 	case "color":
 		require(st.Phase == swap2PhaseColorChoice, "wrong phase")
-		ch := parseU8Fast(arg1)
-		require(ch == 1 || ch == 2, "invalid color")
+		ch := parseU8Fast(arg1) // 1 = be X, 2 = be O
+		require(ch == 1 || ch == 2, "invalid color choice")
 
-		// Event: creator chose final color
 		EmitSwapColorChosen(g.ID, *caller, ch)
 
 		if ch == 2 {
-			// creator wants to be O -> swap roles
-			tmp := g.Creator
-			g.Creator = *g.Opponent
-			*g.Opponent = tmp
+			// Creator wants to play O → swap roles
+			temp := g.PlayerX
+			g.PlayerX = *g.PlayerO
+			*g.PlayerO = temp
 		}
 
-		// Opening complete → normal play with X to move
+		// Exit opening, start normal play
 		st.Phase = swap2PhaseNone
 		clearSwap2(g.ID)
 		g.Turn = X
 
-		// Event: opening done (final roles)
-		EmitSwapPhaseComplete(g.ID, g.Creator, *g.Opponent)
+		saveGame(g)
+		EmitSwapPhaseComplete(g.ID, g.PlayerX, *g.PlayerO)
+		return nil
 
 	default:
 		sdk.Abort("invalid swap op")
 	}
 
-	// Update last move time for any valid opening action
-	ts := *sdk.GetEnvKey("block.timestamp")
-	g.LastMoveAt = parseISO8601ToUnix(ts)
-	saveGame(g)
-
-	// Persist opening state if still active
-	if st.Phase != swap2PhaseNone {
-		saveSwap2(g.ID, st)
-	}
 	return nil
 }
 
@@ -821,9 +838,14 @@ func checkLineWin(g *Game, row, col, winLen int) bool {
 	}
 	return false
 }
-
 func isPlayer(g *Game, addr string) bool {
-	return addr == g.Creator || (g.Opponent != nil && addr == *g.Opponent)
+	if addr == g.PlayerX {
+		return true
+	}
+	if g.PlayerO != nil && addr == *g.PlayerO {
+		return true
+	}
+	return false
 }
 
 func transferPot(g *Game, sendTo string) {
@@ -837,8 +859,8 @@ func transferPot(g *Game, sendTo string) {
 }
 
 func splitPot(g *Game) {
-	if g.GameAsset != nil && g.GameBetAmount != nil && g.Opponent != nil {
-		sdk.HiveTransfer(sdk.Address(g.Creator), *g.GameBetAmount, *g.GameAsset)
-		sdk.HiveTransfer(sdk.Address(*g.Opponent), *g.GameBetAmount, *g.GameAsset)
+	if g.GameAsset != nil && g.GameBetAmount != nil && g.PlayerO != nil {
+		sdk.HiveTransfer(sdk.Address(g.PlayerX), *g.GameBetAmount, *g.GameAsset)
+		sdk.HiveTransfer(sdk.Address(*g.PlayerO), *g.GameBetAmount, *g.GameAsset)
 	}
 }
