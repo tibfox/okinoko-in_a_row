@@ -24,7 +24,7 @@ func emitEvent(eventType string, attributes map[string]string) {
 
 // EmitGameCreated emits an event when a new game is created.
 func EmitGameCreated(gameId uint64, createdByAddress string) {
-	emitEvent("gameCreated", map[string]string{
+	emitEvent("created", map[string]string{
 		"id": UInt64ToString(gameId),
 		"by": createdByAddress,
 	})
@@ -32,7 +32,7 @@ func EmitGameCreated(gameId uint64, createdByAddress string) {
 
 // EmitGameJoined emits an event when a player joins an existing game.
 func EmitGameJoined(gameId uint64, joinedByAddress string) {
-	emitEvent("gameJoined", map[string]string{
+	emitEvent("joined", map[string]string{
 		"id":     UInt64ToString(gameId),
 		"joined": joinedByAddress,
 	})
@@ -40,7 +40,7 @@ func EmitGameJoined(gameId uint64, joinedByAddress string) {
 
 // EmitGameWon emits an event when a game is won by a player.
 func EmitGameWon(gameId uint64, winnerAddress string) {
-	emitEvent("gameWon", map[string]string{
+	emitEvent("won", map[string]string{
 		"id":     UInt64ToString(gameId),
 		"winner": winnerAddress,
 	})
@@ -48,15 +48,31 @@ func EmitGameWon(gameId uint64, winnerAddress string) {
 
 // EmitGameResigned emits an event when a player resigns from a game.
 func EmitGameResigned(gameId uint64, resignedAddress string) {
-	emitEvent("gameResigned", map[string]string{
+	emitEvent("resigned", map[string]string{
 		"id":       UInt64ToString(gameId),
 		"resigner": resignedAddress,
 	})
 }
 
+// EmitGameResigned emits an event when a player resigns from a game.
+func EmitGameTimedOut(gameId uint64, timedOutPlayer string) {
+	emitEvent("timeout", map[string]string{
+		"id":       UInt64ToString(gameId),
+		"timedOut": timedOutPlayer,
+	})
+}
+
+// EmitGameResigned emits an event when a player resigns from a game.
+func EmitFirstMoveRightsPurchased(gameId uint64, player string) {
+	emitEvent("firstMovePurchased", map[string]string{
+		"id":     UInt64ToString(gameId),
+		"player": player,
+	})
+}
+
 // EmitGameDraw emits an event when a game ends in a draw.
 func EmitGameDraw(gameId uint64) {
-	emitEvent("gameDraw", map[string]string{
+	emitEvent("draw", map[string]string{
 		"id": UInt64ToString(gameId),
 	})
 }
@@ -64,7 +80,7 @@ func EmitGameDraw(gameId uint64) {
 // EmitGameMoveMade emits an event when a player makes a move in a game.
 // Includes the cell index of the move.
 func EmitGameMoveMade(gameId uint64, moveByAddress string, pos uint8) {
-	emitEvent("gameMove", map[string]string{
+	emitEvent("move", map[string]string{
 		"id":     UInt64ToString(gameId),
 		"moveBy": moveByAddress,
 		"cell":   strconv.FormatUint(uint64(pos), 10),

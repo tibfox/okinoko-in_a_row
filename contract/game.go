@@ -1,351 +1,200 @@
 package main
 
 import (
-	"encoding/binary"
 	"okinoko-in_a_row/sdk"
 	"strings"
 )
 
-// ---------- Types & Constants ----------
+// ---------- Types -----------
 
-// GameType defines supported game modes by numeric ID.
-// Used to derive board size and rules.
 type GameType uint8
 
 const (
-	// TicTacToe is a 3x3 game where 3 marks in a row win.
-	TicTacToe GameType = 1
-	// ConnectFour is a 6x7 vertical drop game where 4 in a row win.
+	TicTacToe   GameType = 1
 	ConnectFour GameType = 2
-	// Gomoku is a 15x15 grid where 5 in a row win.
-	Gomoku GameType = 3
+	Gomoku      GameType = 3
+	TicTacToe5  GameType = 4
+	Squava      GameType = 5 // https://nestorgames.com/rulebooks/SQUAVA_EN.pdf
 )
 
-// Cell represents the state of a cell on the board stored as 2 bits.
 type Cell uint8
 
 const (
-	Empty Cell = 0 // Empty cell
-	X     Cell = 1 // Mark of first player
-	O     Cell = 2 // Mark of second player
+	Empty Cell = 0
+	X     Cell = 1
+	O     Cell = 2
 )
 
-// GameStatus indicates the current state of a game in lifecycle.
 type GameStatus uint8
 
 const (
-	WaitingForPlayer GameStatus = 0 // Created and awaiting opponent
-	InProgress       GameStatus = 1 // Two players joined and game has started
-	Finished         GameStatus = 2 // Game ended (win, draw, resignation, timeout)
+	WaitingForPlayer GameStatus = 0
+	InProgress       GameStatus = 1
+	Finished         GameStatus = 2
 )
 
-// ---------- Swap2 Freestyle (Gomoku) opening state (stored separately) ----------
-
-// Swap2 phases for Gomoku freestyle opening
-const (
-	swap2PhaseNone        uint8 = 0 // not in opening (normal gameplay)
-	swap2PhaseOpening     uint8 = 1 // creator placing first 3 stones (2 X, 1 O)
-	swap2PhaseSwapChoice  uint8 = 2 // opponent chooses: swap / stay / add
-	swap2PhaseExtraPlace  uint8 = 3 // opponent placing 2 extra stones (one X, one O)
-	swap2PhaseColorChoice uint8 = 4 // creator chooses final color after extra stones
-)
-
-// ---------- Game (runtime struct; storage is binary) ----------
-
-// Game contains the full game state used at runtime and persisted via binary codec.
-//
-// Fields:
-//   - ID: unique numeric identifier
-//   - Type: TicTacToe, ConnectFour, or Gomoku
-//   - Name: human-readable game name (not including '|')
-//   - Creator: address of player X
-//   - Opponent: optional address of player O
-//   - Board: compressed 2-bits-per-cell representation
-//   - Turn: whose turn it is (X or O)
-//   - MovesCount: total moves made
-//   - Status: waiting, in progress, or finished
-//   - Winner: optional address of winner when finished
-//   - GameAsset/GameBetAmount: optional betting configuration
-//   - LastMoveAt: last move timestamp (unix seconds)
+// Core runtime struct (not persisted directly)
 type Game struct {
-	ID            uint64
-	Type          GameType
-	Name          string
-	Creator       string
-	Opponent      *string
-	Board         []byte // 2bpp, 4 cells stored per byte
-	Turn          Cell
-	MovesCount    uint16
-	Status        GameStatus
-	Winner        *string
-	GameAsset     *sdk.Asset
-	GameBetAmount *int64
-	LastMoveAt    uint64        // unix seconds
-	Phase         GamePhase     // Tracks Swap2 opening phases for Gomoku
-	SwapPending   bool          // Whether we are waiting for swap decision
-	InitialMoves  []OpeningMove // Stores opening stones
-	PlayerX       string        // always non-nil; starts as Creator
-	PlayerO       *string       // nil until opponent joins
-
+	ID             uint64
+	Type           GameType
+	Name           string
+	Creator        string
+	Opponent       *string
+	PlayerX        string
+	PlayerO        *string
+	Status         GameStatus
+	Winner         *string
+	GameAsset      *sdk.Asset
+	GameBetAmount  *uint64
+	LastMoveAt     uint64
+	FirstMoveCosts *uint64
 }
 
-// GamePhase defines the current play phase, used for Gomoku Swap2.
-type GamePhase uint8
+// ---------- Key Helpers ----------
 
-const (
-	PhaseNormal           GamePhase = iota // TicTacToe/Connect4 or post-opening Gomoku
-	PhaseGomokuOpening                     // First three stones placement
-	PhaseGomokuSwapChoice                  // Waiting for opponent to decide
-)
-
-// OpeningMove records initial stones for Gomoku Swap2 phase.
-type OpeningMove struct {
-	Row  uint8
-	Col  uint8
-	Cell Cell // X or O
+func gameMetaKey(id uint64) string  { return "g_" + UInt64ToString(id) + "_meta" }
+func gameStateKey(id uint64) string { return "g_" + UInt64ToString(id) + "_state" }
+func moveCountKey(id uint64) string { return "g_" + UInt64ToString(id) + "_moves" }
+func moveKey(id uint64, n uint64) string {
+	return "g_" + UInt64ToString(id) + "_move_" + UInt64ToString(n)
 }
 
-// ---------- Binary State Codec (v2) ----------
+func swap2Key(id uint64) string { return "g_" + UInt64ToString(id) + "_swap2" }
 
-// codecVersion increments when storage encoding changes.
-// Used to detect incompatible on-chain state.
-const codecVersion uint8 = 2
+// ---------- Metadata ----------
+// Layout: "type|name|creator|opponent|asset|bet|firstMoveCosts|createdTs"
 
-// saveGame serializes the Game struct into binary format and writes it to chain state.
-//
-// Storage key format: "g:<ID>"
-func saveGame(g *Game) {
-	b := encodeGame(g)
-	sdk.StateSetObject(gameKey(g.ID), string(b))
-}
-
-// loadGame retrieves a game from state by ID, decoding it back into the runtime struct.
-// Aborts if no state exists.
-//
-// Returns:
-//
-//	*Game - fully reconstructed game instance
-func loadGame(id uint64) *Game {
-	val := sdk.StateGetObject(gameKey(id))
-	if val == nil || *val == "" {
-		sdk.Abort("game not found")
-	}
-	return decodeGame([]byte(*val))
-}
-
-// encodeGame serializes all game fields into a compact byte slice.
-//
-// Layout:
-//
-//	version | ID | Type | Meta | MovesCount | LastMoveAt | Name | Creator | Opponent? | Winner? | Asset? | Bet? | Board bytes
-//
-// Meta packs Turn and Status into a single byte:
-//
-//	bits 0-1: Turn
-//	bits 2-3: Status
-func encodeGame(g *Game) []byte {
-	out := make([]byte, 0, 16+len(g.Name)+64+len(g.Board))
-
-	// Local helpers to pack integers in big-endian format
-	w8 := func(x byte) { out = append(out, x) }
-	w16 := func(x uint16) {
-		var tmp [2]byte
-		binary.BigEndian.PutUint16(tmp[:], x)
-		out = append(out, tmp[:]...)
-	}
-	w64 := func(x uint64) {
-		var tmp [8]byte
-		binary.BigEndian.PutUint64(tmp[:], x)
-		out = append(out, tmp[:]...)
-	}
-	wI64 := func(x int64) { w64(uint64(x)) }
-	writeStr := func(s string) {
-		w16(uint16(len(s)))
-		out = append(out, s...)
-	}
-
-	// Pack turn and status into a single byte
-	meta := byte(g.Turn&0x3) | byte((g.Status&0x3)<<2)
-
-	w8(codecVersion)
-	w64(g.ID)
-	w8(byte(g.Type))
-	w8(meta)
-	w16(g.MovesCount)
-	w64(g.LastMoveAt)
-
-	// Name (u8 len) then bytes; Creator stored as u16 len + bytes
-	w8(byte(len(g.Name)))
-	out = append(out, g.Name...)
-	writeStr(g.Creator)
-
-	// Store optional fields as flag + data
+func saveMeta(g *Game) {
+	var opp, asset, bet, fmc string
 	if g.Opponent != nil {
-		w8(1)
-		writeStr(*g.Opponent)
-	} else {
-		w8(0)
+		opp = *g.Opponent
 	}
-	if g.Winner != nil {
-		w8(1)
-		writeStr(*g.Winner)
-	} else {
-		w8(0)
-	}
-
-	// PlayerX (always exists)
-	writeStr(g.PlayerX)
-
-	// PlayerO (optional)
-	if g.PlayerO != nil {
-		w8(1)
-		writeStr(*g.PlayerO)
-	} else {
-		w8(0)
-	}
-
 	if g.GameAsset != nil {
-		w8(1)
-		writeStr(g.GameAsset.String())
-	} else {
-		w8(0)
+		asset = g.GameAsset.String()
 	}
 	if g.GameBetAmount != nil {
-		w8(1)
-		wI64(*g.GameBetAmount)
-	} else {
-		w8(0)
+		bet = UInt64ToString(uint64(*g.GameBetAmount))
 	}
-
-	// Append raw board bytes
-	out = append(out, g.Board...)
-	return out
+	if g.FirstMoveCosts != nil {
+		fmc = UInt64ToString(uint64(*g.FirstMoveCosts))
+	}
+	tsString := sdk.GetEnvKey("block.timestamp")
+	unixTS := parseISO8601ToUnix(*tsString)
+	meta := strings.Join([]string{
+		UInt64ToString(uint64(g.Type)),
+		g.Name,
+		g.Creator,
+		opp,
+		asset,
+		bet,
+		fmc,
+		UInt64ToString(unixTS),
+	}, "|")
+	sdk.StateSetObject(gameMetaKey(g.ID), meta)
 }
 
-// decodeGame reads bytes from chain storage and reconstructs a *Game,
-// ensuring no trailing bytes remain (data integrity).
-func decodeGame(b []byte) *Game {
-	r := &rd{b: b}
-	require(r.u8() == codecVersion, "unsupported version")
-	g := &Game{}
-	g.ID = r.u64()
-	g.Type = GameType(r.u8())
-	meta := r.u8()
-	g.Turn = Cell(meta & 0x3)
-	g.Status = GameStatus((meta >> 2) & 0x3)
-	g.MovesCount = r.u16()
-	g.LastMoveAt = r.u64()
+// Load metadata into Game (state populated separately)
+func loadGame(id uint64) *Game {
+	// Load meta
+	metaPtr := sdk.StateGetObject(gameMetaKey(id))
+	require(metaPtr != nil && *metaPtr != "", "meta missing")
+	s := *metaPtr
+	typStr := nextField(&s)
+	name := nextField(&s)
+	creator := nextField(&s)
+	opponent := nextField(&s)
+	assetStr := nextField(&s)
+	betStr := nextField(&s)
+	fmcStr := nextField(&s)
+	createdTsString := nextField(&s)
+	lastMoveOn := StringToUInt64(&createdTsString)
 
-	nameLen := int(r.u8())
-	g.Name = string(r.bytes(nameLen))
-	g.Creator = r.str()
-
-	if r.u8() == 1 {
-		opp := r.str()
-		g.Opponent = &opp
-	}
-	if r.u8() == 1 {
-		ww := r.str()
-		g.Winner = &ww
-	}
-	// PlayerX (always stored as string)
-	g.PlayerX = r.str()
-
-	// PlayerO (optional)
-	if r.u8() == 1 {
-		po := r.str()
-		g.PlayerO = &po
-	} else {
-		g.PlayerO = nil
+	count := readMoveCount(id)
+	if count > 0 {
+		_, _, _, lastMoveOn, _ = readMove(id, count)
 	}
 
-	if r.u8() == 1 {
-		ast := sdk.Asset(r.str())
-		g.GameAsset = &ast
-	}
-	if r.u8() == 1 {
-		amt := r.i64()
-		g.GameBetAmount = &amt
+	gType := GameType(parseU8Fast(typStr))
+	g := &Game{
+		ID:         id,
+		Type:       gType,
+		Name:       name,
+		Creator:    creator,
+		PlayerX:    creator,
+		LastMoveAt: lastMoveOn,
 	}
 
-	// Allocate board with exact expected size
-	bl := boardSize(g.Type)
-	g.Board = make([]byte, bl)
-	copy(g.Board, r.bytes(bl))
+	if opponent != "" {
+		g.Opponent = &opponent
+		g.PlayerO = &opponent
+	}
+	if assetStr != "" {
+		a := sdk.Asset(assetStr)
+		g.GameAsset = &a
+	}
+	if betStr != "" {
+		v := uint64(parseU64Fast(betStr))
+		g.GameBetAmount = &v
+	}
 
-	r.mustEnd()
+	if fmcStr != "" {
+		v := uint64(parseU64Fast(fmcStr))
+		g.FirstMoveCosts = &v
+	}
+
+	// Load state (status|winner|playerX|playerO)
+	statePtr := sdk.StateGetObject(gameStateKey(id))
+	require(statePtr != nil && *statePtr != "", "state missing")
+	st := *statePtr
+	statusStr := nextField(&st)
+	winnerStr := nextField(&st)
+	// lastMoveStr := nextField(&st)
+	playerXStr := nextField(&st)
+	playerOStr := nextField(&st)
+
+	g.Status = GameStatus(parseU8Fast(statusStr))
+	if winnerStr != "" {
+		g.Winner = &winnerStr
+	}
+
+	// PlayerX/PlayerO override any defaults
+	g.PlayerX = playerXStr
+	if playerOStr != "" {
+		g.PlayerO = &playerOStr
+	}
+
 	return g
 }
 
-// rd is a binary reader utility over a byte slice,
-// providing big-endian integer reads with safety checks.
-type rd struct {
-	b []byte // raw buffer
-	i int    // current read index
+// ---------- State ----------
+// Layout: "status|winner|playerX|playerO"
+func saveState(g *Game) {
+	var winner, o string
+	if g.Winner != nil {
+		winner = *g.Winner
+	}
+	if g.PlayerO != nil {
+		o = *g.PlayerO
+	}
+	val := strings.Join([]string{
+		UInt64ToString(uint64(g.Status)),
+		winner,
+		g.PlayerX,
+		o,
+	}, "|")
+	sdk.StateSetObject(gameStateKey(g.ID), val)
 }
 
-// need ensures that n bytes are available from current position.
-func (r *rd) need(n int) { require(r.i+n <= len(r.b), "decode overflow") }
+// ---------- Board Reconstruction ----------
 
-// u8 reads one byte.
-func (r *rd) u8() byte {
-	r.need(1)
-	v := r.b[r.i]
-	r.i++
-	return v
-}
-
-// u16 reads a uint16 in big-endian format.
-func (r *rd) u16() uint16 {
-	r.need(2)
-	v := binary.BigEndian.Uint16(r.b[r.i : r.i+2])
-	r.i += 2
-	return v
-}
-
-// u64 reads a uint64 in big-endian format.
-func (r *rd) u64() uint64 {
-	r.need(8)
-	v := binary.BigEndian.Uint64(r.b[r.i : r.i+8])
-	r.i += 8
-	return v
-}
-
-// i64 reads a signed int64 (stored as uint64).
-func (r *rd) i64() int64 { return int64(r.u64()) }
-
-// bytes reads n raw bytes from the buffer.
-func (r *rd) bytes(n int) []byte {
-	r.need(n)
-	v := r.b[r.i : r.i+n]
-	r.i += n
-	return v
-}
-
-// str reads a length-prefixed string (2-byte length).
-func (r *rd) str() string {
-	l := int(r.u16())
-	return string(r.bytes(l))
-}
-
-// mustEnd verifies that the reader consumed all bytes exactly.
-func (r *rd) mustEnd() { require(r.i == len(r.b), "trailing bytes") }
-
-// ---------- Utils ----------
-
-// gameKey constructs the state key for storing a game.
-// Format: "g:<gameId>"
-func gameKey(gameId uint64) string { return "g:" + UInt64ToString(gameId) }
-
-// dims returns the row and column count appropriate for a game type.
-//
-// Returns:
-//
-//	(rows, cols) according to the type
-func dims(gt GameType) (rows, cols int) {
+func boardDimensions(gt GameType) (int, int) {
 	switch gt {
 	case TicTacToe:
 		return 3, 3
+	case TicTacToe5:
+		return 5, 5
+	case Squava:
+		return 5, 5
 	case ConnectFour:
 		return 6, 7
 	case Gomoku:
@@ -356,64 +205,7 @@ func dims(gt GameType) (rows, cols int) {
 	return 0, 0
 }
 
-// boardSize returns the number of bytes required to hold the board
-// using 2 bits per cell (4 cells per byte).
-func boardSize(gt GameType) int {
-	switch gt {
-	case TicTacToe:
-		return 3 // ceil(9 cells * 2 bits / 8) = 3 bytes
-	case ConnectFour:
-		return 11 // ceil(42*2/8) = 11 bytes
-	case Gomoku:
-		return 57 // ceil(225*2/8) = 57 bytes
-	default:
-		sdk.Abort("invalid game type")
-	}
-	return 0
-}
-
-// initBoard creates a zero-filled board buffer sized for the game type.
-func initBoard(gt GameType) []byte { return make([]byte, boardSize(gt)) }
-
-// getCell extracts the value of a specific board cell using bit operations.
-//
-// Position is computed as 2 bits per cell, row-major order.
-func getCell(board []byte, row, col, cols int) Cell {
-	idx := row*cols + col
-	byteIdx, bitShift := idx/4, (idx%4)*2
-	return Cell((board[byteIdx] >> bitShift) & 0x03)
-}
-
-// setCell sets a cell's value using bit masking to preserve other cells in the byte.
-func setCell(board []byte, row, col, cols int, val Cell) {
-	idx := row*cols + col
-	byteIdx, bitShift := idx/4, (idx%4)*2
-	board[byteIdx] = (board[byteIdx] & ^(0x03 << bitShift)) | (byte(val) << bitShift)
-}
-
-// ---------- Game Counter Helpers ----------
-
-// getGameCount retrieves the current game counter from state.
-// If no counter exists, returns 0 (first game ID).
-func getGameCount() uint64 {
-	ptr := sdk.StateGetObject("g:count")
-	if ptr == nil || *ptr == "" {
-		return 0
-	}
-	return StringToUInt64(ptr)
-}
-
-// setGameCount updates the stored global game counter to newCount.
-func setGameCount(newCount uint64) {
-	sdk.StateSetObject("g:count", UInt64ToString(newCount))
-}
-
-// ----- swap2 related helpers ------
-
-// swap2Key builds the state key as "g:swap2:<id>"
-func swap2Key(id uint64) string {
-	return "g:swap2:" + UInt64ToString(id)
-}
+// ---------- Swap2 State ----------
 
 type swap2State struct {
 	Phase     uint8
@@ -424,98 +216,319 @@ type swap2State struct {
 	ExtraO    uint8
 }
 
-// loadSwap2 loads the swap state for a game, or returns nil if no swap phase is active.
+// Swap2 phases for Gomoku freestyle opening
+const (
+	swap2PhaseNone        uint8 = 0 // not in opening
+	swap2PhaseOpening     uint8 = 1 // creator places 3 initial stones
+	swap2PhaseSwapChoice  uint8 = 2 // opponent decides swap/stay/add
+	swap2PhaseExtraPlace  uint8 = 3 // opponent places extra stones
+	swap2PhaseColorChoice uint8 = 4 // creator chooses final color
+)
+
+// Stored as ASCII: "phase|nextActor|initX|initO|extraX|extraO"
 func loadSwap2(id uint64) *swap2State {
 	ptr := sdk.StateGetObject(swap2Key(id))
 	if ptr == nil || *ptr == "" {
 		return nil
 	}
 	s := *ptr
-	st := &swap2State{}
-	st.Phase = parseU8Fast(nextField(&s))
-	st.NextActor = nextField(&s)
-	st.InitX = parseU8Fast(nextField(&s))
-	st.InitO = parseU8Fast(nextField(&s))
-	st.ExtraX = parseU8Fast(nextField(&s))
-	st.ExtraO = parseU8Fast(nextField(&s))
-	return st
+	return &swap2State{
+		Phase:     parseU8Fast(nextField(&s)),
+		NextActor: nextField(&s),
+		InitX:     parseU8Fast(nextField(&s)),
+		InitO:     parseU8Fast(nextField(&s)),
+		ExtraX:    parseU8Fast(nextField(&s)),
+		ExtraO:    parseU8Fast(nextField(&s)),
+	}
 }
 
-// saveSwap2 saves the swap state as a compact | delimited string.
 func saveSwap2(id uint64, st *swap2State) {
-	var b strings.Builder
-	b.Grow(64) // pre-allocate small buffer
-	b.WriteString(UInt64ToString(uint64(st.Phase)))
-	b.WriteString("|")
-	b.WriteString(st.NextActor)
-	b.WriteString("|")
-	b.WriteString(UInt64ToString(uint64(st.InitX)))
-	b.WriteString("|")
-	b.WriteString(UInt64ToString(uint64(st.InitO)))
-	b.WriteString("|")
-	b.WriteString(UInt64ToString(uint64(st.ExtraX)))
-	b.WriteString("|")
-	b.WriteString(UInt64ToString(uint64(st.ExtraO)))
-	sdk.StateSetObject(swap2Key(id), b.String())
+	val := strings.Join([]string{
+		UInt64ToString(uint64(st.Phase)),
+		st.NextActor,
+		UInt64ToString(uint64(st.InitX)),
+		UInt64ToString(uint64(st.InitO)),
+		UInt64ToString(uint64(st.ExtraX)),
+		UInt64ToString(uint64(st.ExtraO)),
+	}, "|")
+	sdk.StateSetObject(swap2Key(id), val)
 }
 
-// clearSwap2 clears the swap state once opening is complete.
 func clearSwap2(id uint64) {
 	sdk.StateSetObject(swap2Key(id), "")
 }
 
-// ---- waiting list ------
+// ---------- Global Waiting For Players List aka Lobby ----------
 
-const waitingGamesKey = "g:waiting:"
-const waitingCountKey = "g:waiting:count"
+const waitingKey = "g_wait"
 
-func waitingIndexKey(i uint64) string {
-	return waitingGamesKey + UInt64ToString(i)
+func addGameToWaitingList(gameID uint64) {
+	waitingList := sdk.StateGetObject(waitingKey)
+	if waitingList == nil || *waitingList == "" {
+		sdk.StateSetObject(waitingKey, UInt64ToString(gameID))
+		return
+	}
+	newList := *waitingList + "," + UInt64ToString(gameID)
+	sdk.StateSetObject(waitingKey, newList)
+}
+func removeGameFromWaitingList(gameID uint64) {
+	waitingList := sdk.StateGetObject(waitingKey)
+	require(waitingList != nil && *waitingList != "", "no waiting games")
+
+	ids := strings.Split(*waitingList, ",")
+	var newIds []string
+	found := false
+	for _, idStr := range ids {
+		if idStr == UInt64ToString(gameID) {
+			found = true
+			continue
+		}
+		newIds = append(newIds, idStr)
+	}
+	require(found, "game not found in waiting list")
+
+	newList := strings.Join(newIds, ",")
+	sdk.StateSetObject(*waitingList, newList)
 }
 
-func getWaitingCount() uint64 {
-	ptr := sdk.StateGetObject(waitingCountKey)
+// ---------- Joined List for User ----------
+
+const joinedListPrefix = "g_joined_" // appended with address
+
+func joinedListKey(sender string) string {
+	return joinedListPrefix + sender
+}
+
+func addGameTojoinedList(sender string, gameID uint64) {
+	joinedList := sdk.StateGetObject(joinedListKey(sender))
+	if joinedList == nil || *joinedList == "" {
+		sdk.StateSetObject(joinedListKey(sender), UInt64ToString(gameID))
+		return
+	}
+	newList := *joinedList + "," + UInt64ToString(gameID)
+	sdk.StateSetObject(joinedListKey(sender), newList)
+}
+func removeGameFromjoinedList(sender string, gameID uint64) {
+	joinedList := sdk.StateGetObject(joinedListKey(sender))
+	require(joinedList != nil && *joinedList != "", "no joined games")
+
+	ids := strings.Split(*joinedList, ",")
+	var newIds []string
+	found := false
+	for _, idStr := range ids {
+		if idStr == UInt64ToString(gameID) {
+			found = true
+			continue
+		}
+		newIds = append(newIds, idStr)
+	}
+	require(found, "game not found in joined list")
+
+	newList := strings.Join(newIds, ",")
+	sdk.StateSetObject(joinedListKey(sender), newList)
+}
+
+// ---------- Utility ----------
+
+func getGameCount() uint64 {
+	ptr := sdk.StateGetObject("g_count")
+	if ptr == nil || *ptr == "" {
+		return 0
+	}
+	return parseU64Fast(*ptr)
+}
+
+func setGameCount(n uint64) {
+	sdk.StateSetObject("g_count", UInt64ToString(n))
+}
+
+func transferPot(g *Game, sendTo string) {
+	if g.GameAsset != nil && g.GameBetAmount != nil {
+		amt := *g.GameBetAmount
+		if g.Opponent != nil {
+			amt *= 2
+		}
+		sdk.HiveTransfer(sdk.Address(sendTo), int64(amt), *g.GameAsset)
+	}
+}
+
+func splitPot(g *Game) {
+	if g.GameAsset != nil && g.GameBetAmount != nil && g.PlayerO != nil {
+		sdk.HiveTransfer(sdk.Address(g.PlayerX), int64(*g.GameBetAmount), *g.GameAsset)
+		sdk.HiveTransfer(sdk.Address(*g.PlayerO), int64(*g.GameBetAmount), *g.GameAsset)
+	}
+}
+
+// nextToPlay returns X or O based on moves parity (even -> X, odd -> O).
+func nextToPlay(moves uint64) Cell {
+	if moves%2 == 0 {
+		return X
+	}
+	return O
+}
+
+// ---------- Player check ----------
+
+func isPlayer(g *Game, addr string) bool {
+	if addr == g.PlayerX {
+		return true
+	}
+	return g.PlayerO != nil && addr == *g.PlayerO
+}
+
+// --- Move-history storage (ASCII) ---
+
+// readMoveCount returns 0 if missing.
+func readMoveCount(id uint64) uint64 {
+	ptr := sdk.StateGetObject(moveCountKey(id))
 	if ptr == nil || *ptr == "" {
 		return 0
 	}
 	return StringToUInt64(ptr)
 }
 
-func setWaitingCount(n uint64) {
-	sdk.StateSetObject(waitingCountKey, UInt64ToString(n))
+func writeMoveCount(id uint64, n uint64) {
+	sdk.StateSetObject(moveCountKey(id), UInt64ToString(n))
 }
 
-// add game to waiting list
-func addGameToWaitingList(gameId uint64) {
-	count := getWaitingCount()
-	sdk.StateSetObject(waitingIndexKey(count), UInt64ToString(gameId))
-	setWaitingCount(count + 1)
+// appendMove stores one move as ASCII: "row|col|cell|ts|moveBy " (cell: '1' or '2')
+func appendMove(id uint64, n uint64, row, col int, cell Cell, ts uint64, sender string) {
+	var b strings.Builder
+	b.Grow(8 + 8 + len(sender) + 10) // row, col, ts ~ up to 20 chars, plus delimiter overhead
+	b.WriteString(UInt64ToString(uint64(row)))
+	b.WriteByte('|')
+	b.WriteString(UInt64ToString(uint64(col)))
+	b.WriteByte('|')
+	b.WriteString(UInt64ToString(uint64(cell)))
+	b.WriteByte('|')
+	b.WriteString(UInt64ToString(uint64(ts)))
+	b.WriteByte('|')
+	b.WriteString(sender)
+	sdk.StateSetObject(moveKey(id, n), b.String())
 }
 
-// remove game using swap-and-pop (removed index will be swapped with last one)
-func removeGameFromWaitingList(gameId uint64) *string {
-	count := getWaitingCount()
-	require(count > 0, "waiting list empty")
+// readMove parses one stored move (row|col|cell|ts|moveBy).
+func readMove(id uint64, n uint64) (row, col int, cell Cell, ts uint64, moveBy string) {
+	ptr := sdk.StateGetObject(moveKey(id, n))
+	require(ptr != nil && *ptr != "", "move "+UInt64ToString(n)+" missing")
+	s := *ptr
+	r := int(parseU64Fast(nextField(&s)))
+	c := int(parseU64Fast(nextField(&s)))
+	ch := parseU8Fast(nextField(&s))
+	moveTs := parseU64Fast(nextField(&s))
+	mb := nextField(&s)
+	return r, c, Cell(ch), moveTs, mb
+}
 
-	// find index of gameId
-	var idx uint64 = ^uint64(0) // ^uint64(0) = 18446744073709551615
-	for i := uint64(0); i < count; i++ {
-		ptr := sdk.StateGetObject(waitingIndexKey(i))
-		if ptr != nil && *ptr == UInt64ToString(gameId) {
-			idx = i
-			break
+// reconstructBoard returns the current [][]Cell and the total number of moves.
+func reconstructBoard(g *Game) ([][]Cell, uint64) {
+	rows, cols := boardDimensions(g.Type)
+	grid := make([][]Cell, rows)
+	for i := 0; i < rows; i++ {
+		grid[i] = make([]Cell, cols)
+	}
+
+	count := readMoveCount(g.ID)
+	for i := uint64(1); i <= count; i++ {
+		r, c, ch, _, _ := readMove(g.ID, i)
+		// Safety bounds check (in case of corrupt test state)
+		if r >= 0 && r < rows && c >= 0 && c < cols {
+			grid[r][c] = ch
 		}
 	}
-	require(idx != ^uint64(0), "game not found")
+	return grid, count
+}
 
-	lastIdx := count - 1
-	if idx != lastIdx {
-		lastVal := sdk.StateGetObject(waitingIndexKey(lastIdx))
-		sdk.StateSetObject(waitingIndexKey(idx), *lastVal)
+// asciiFromGrid encodes [][]Cell into row-major ASCII ('0','1','2').
+func asciiFromGrid(grid [][]Cell) string {
+	rows := len(grid)
+	if rows == 0 {
+		return ""
+	}
+	cols := len(grid[0])
+	out := make([]byte, rows*cols)
+	k := 0
+	for r := 0; r < rows; r++ {
+		row := grid[r]
+		for c := 0; c < cols; c++ {
+			out[k] = byte('0' + row[c])
+			k++
+		}
+	}
+	return string(out)
+}
+
+// ==== Grid utilities ([][]Cell) ====
+
+func getCellGrid(grid [][]Cell, r, c int) Cell {
+	return grid[r][c]
+}
+func setCellGrid(grid [][]Cell, r, c int, v Cell) {
+	grid[r][c] = v
+}
+
+func dropDiscGrid(grid [][]Cell, col int) int {
+	rows := len(grid)
+	for r := rows - 1; r >= 0; r-- {
+		if grid[r][col] == Empty {
+			grid[r][col] = X // placeholder; caller should overwrite with actual mark
+			return r
+		}
+	}
+	return -1
+}
+
+func checkPatternGrid(grid [][]Cell, row, col, winLen int, exactLen bool) bool {
+	rows := len(grid)
+	if rows == 0 {
+		return false
+	}
+	cols := len(grid[0])
+	mark := grid[row][col]
+	if mark == Empty {
+		return false
 	}
 
-	// clear last entry
-	sdk.StateSetObject(waitingIndexKey(lastIdx), "")
-	setWaitingCount(lastIdx)
-	return nil
+	dirs := [][2]int{{1, 0}, {0, 1}, {1, 1}, {1, -1}}
+	for _, d := range dirs {
+		count := 1
+
+		// forward direction
+		fr, fc := row+d[0], col+d[1]
+		for fr >= 0 && fr < rows && fc >= 0 && fc < cols && grid[fr][fc] == mark {
+			count++
+			fr += d[0]
+			fc += d[1]
+		}
+
+		// backward direction
+		br, bc := row-d[0], col-d[1]
+		for br >= 0 && br < rows && bc >= 0 && bc < cols && grid[br][bc] == mark {
+			count++
+			br -= d[0]
+			bc -= d[1]
+		}
+
+		// normal win condition
+		if !exactLen {
+			if count >= winLen {
+				return true
+			}
+		} else {
+			// exact-length win:
+			if count == winLen {
+				// Check forward beyond the line to ensure no extra same-mark cell
+				if fr >= 0 && fr < rows && fc >= 0 && fc < cols && grid[fr][fc] == mark {
+					continue // longer than winLen, not valid
+				}
+				// Check backward beyond the line
+				if br >= 0 && br < rows && bc >= 0 && bc < cols && grid[br][bc] == mark {
+					continue // longer than winLen, not valid
+				}
+				return true
+			}
+		}
+	}
+
+	return false
 }
