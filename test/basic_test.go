@@ -12,18 +12,15 @@ func TestCreateGames(t *testing.T) {
 	CallContract(t, ct, "g_create", []byte("1|XOXO|"), nil, "hive:someone", true, uint(1_000_000_000), "", nil)
 	CallContract(t, ct, "g_get", []byte("0"), nil, "hive:someone", true, uint(1_000_000_000), "", nil)
 	// CallContract(t, ct, "g_get", []byte("1"), nil, "hive:someone", false, uint(1_000_000_000), "", nil)
-
 	CallContract(t, ct, "g_create", []byte("2|Connect4|"), nil, "hive:someone", true, uint(1_000_000_000), "", nil)
 	CallContract(t, ct, "g_get", []byte("1"), nil, "hive:someone", true, uint(1_000_000_000), "", nil)
 	CallContract(t, ct, "g_create", []byte("3|Gomoku|"), nil, "hive:someone", true, uint(1_000_000_000), "", nil)
 	CallContract(t, ct, "g_get", []byte("2"), nil, "hive:someone", true, uint(1_000_000_000), "", nil)
-	CallContract(t, ct, "g_waiting", []byte(""), nil, "hive:someone", true, uint(1_000_000_000), "0,1,2", nil)
 	CallContract(t, ct, "g_resign", []byte("2"), nil, "hive:someone", true, uint(1_000_000_000), "", nil)
-	CallContract(t, ct, "g_waiting", []byte(""), nil, "hive:someone", true, uint(1_000_000_000), "0,1", nil)
 	CallContract(t, ct, "g_get", []byte("2"), nil, "hive:someone", true, uint(1_000_000_000), "", nil)
 }
 
-func TestJoinGame(t *testing.T) {
+func TestJoinGameOnly(t *testing.T) {
 	ct := SetupContractTest()
 	CallContract(t, ct, "g_create", []byte("1|XOXO|"), nil, "hive:someone", true, uint(1_000_000_000), "", nil)
 	// CallContract(t, ct, "g_join", []byte("0"), nil, "hive:someone", false, uint(1_000_000_000), "", nil)
@@ -33,15 +30,25 @@ func TestJoinGame(t *testing.T) {
 	CallContract(t, ct, "g_get", []byte("0"), nil, "hive:someone", true, uint(1_000_000_000), "", nil)
 }
 
+func TestJGameCreateGas(t *testing.T) {
+	ct := SetupContractTest()
+	CallContract(t, ct, "g_create", []byte("1||"),
+		[]contracts.Intent{{Type: "transfer.allow", Args: map[string]string{"limit": "1.000", "token": "hive"}}},
+		"hive:someone", true, uint(1_000_000_000), "", nil)
+	CallContract(t, ct, "g_create", []byte("1||"),
+		[]contracts.Intent{{Type: "transfer.allow", Args: map[string]string{"limit": "1.000", "token": "hive"}}},
+		"hive:someone", true, uint(1_000_000_000), "", nil)
+}
+
 func TestJoinGameFirstMove(t *testing.T) {
 	ct := SetupContractTest()
-	CallContract(t, ct, "g_create", []byte("1|XOXO|0.2"),
+	CallContract(t, ct, "g_create", []byte("1|X|0.2"),
 		[]contracts.Intent{{Type: "transfer.allow", Args: map[string]string{"limit": "1.000", "token": "hive"}}},
 		"hive:someone", true, uint(1_000_000_000), "", nil)
 	val := ct.StateGet(ContractID, "g_wait")
 	fmt.Println(val)
 
-	CallContract(t, ct, "g_create", []byte("1|XOXO#2|0.2"),
+	CallContract(t, ct, "g_create", []byte("1|X2|0.2"),
 		[]contracts.Intent{{Type: "transfer.allow", Args: map[string]string{"limit": "1.000", "token": "hive"}}},
 		"hive:someone", true, uint(1_000_000_000), "", nil)
 
@@ -64,18 +71,27 @@ func TestTTTPlayGameCreatorWin(t *testing.T) {
 		[]byte("1|XOXO|"),
 		[]contracts.Intent{{Type: "transfer.allow", Args: map[string]string{"limit": "1.000", "token": "hive"}}},
 		"hive:someone", true, uint(1_000_000_000), "", nil)
-	CallContract(t, ct, "g_get", []byte("0"), nil, "hive:someone", true, uint(1_000_000_000), "", nil)
-	CallContract(t, ct, "g_join", []byte("0"), nil, "hive:someoneelse", false, uint(1_000_000_000), "", nil)
+
 	CallContract(t, ct, "g_join", []byte("0"),
 		[]contracts.Intent{{Type: "transfer.allow", Args: map[string]string{"limit": "1.000", "token": "hive"}}},
 		"hive:someoneelse", true, uint(1_000_000_000), "", nil)
-
+	CallContract(t, ct, "g_get", []byte("0"), nil, "hive:someone", true, uint(1_000_000_000), "", nil)
 	CallContract(t, ct, "g_move", []byte("0|1|1"), nil, "hive:someone", true, uint(1_000_000_000), "", nil)
 	CallContract(t, ct, "g_move", []byte("0|0|1"), nil, "hive:someoneelse", true, uint(1_000_000_000), "", nil)
 	CallContract(t, ct, "g_move", []byte("0|2|0"), nil, "hive:someone", true, uint(1_000_000_000), "", nil)
 	CallContract(t, ct, "g_move", []byte("0|1|0"), nil, "hive:someoneelse", true, uint(1_000_000_000), "", nil)
 	CallContract(t, ct, "g_move", []byte("0|0|2"), nil, "hive:someone", true, uint(1_000_000_000), "", nil)
 	CallContract(t, ct, "g_get", []byte("0"), nil, "hive:someone", true, uint(1_000_000_000), "", nil)
+}
+
+func TestGasCheckMoves(t *testing.T) {
+	ct := SetupContractTest()
+	creator := "hive:x"
+	joiner := "hive:y"
+	CallContract(t, ct, "g_create", []byte("1|XOXO|"), nil, creator, true, uint(1_000_000_000), "", nil)
+	CallContract(t, ct, "g_join", []byte("0"), nil, joiner, true, uint(1_000_000_000), "", nil)
+	CallContract(t, ct, "g_move", []byte("0|1|1"), nil, creator, true, uint(1_000_000_000), "", nil)
+	CallContract(t, ct, "g_move", []byte("0|0|1"), nil, joiner, true, uint(1_000_000_000), "", nil)
 }
 
 func TestTTT5PlayGameCreatorWin(t *testing.T) {
@@ -234,7 +250,7 @@ func TestTTTPlayGameTimeout(t *testing.T) {
 	// cretor made move at 2025-09-01
 	CallContract(t, ct, "g_move", []byte("0|1|1"), nil, "hive:someone", true, uint(1_000_000_000), "", toStringPtr("2025-09-03T00:00:01"))
 
-	// creator wated 7 das for joiner to make a move > should be able to timeout joiner
+	// creator waited 7 days for joiner to make a move > should be able to timeout joiner
 	CallContract(t, ct, "g_timeout", []byte("0"), nil, "hive:someone", true, uint(1_000_000_000), "", toStringPtr("2025-09-10T00:00:02"))
 
 }
@@ -263,7 +279,7 @@ func TestTTTPlayGameNoMovesTimeout(t *testing.T) {
 func TestGSetupLoop(t *testing.T) {
 	ct := SetupContractTest()
 	// create Gomoku game - waiting for someone to join
-	CallContract(t, ct, "g_create", []byte("3|Gomoku|"), nil, "hive:someone", true, uint(1_000_000_000), "", nil)
+	CallContract(t, ct, "g_create", []byte("3|Gomoku 4 Life|"), nil, "hive:someone", true, uint(1_000_000_000), "", nil)
 	// someonelese joined
 	CallContract(t, ct, "g_join", []byte("0"), nil, "hive:someoneelse", true, uint(1_000_000_000), "", nil)
 	// CallContract(t, ct, "g_move", []byte("0|0|0"), nil, "hive:someone", false, uint(1_000_000_000), "", nil)

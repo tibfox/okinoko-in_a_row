@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"okinoko-in_a_row/sdk"
@@ -35,102 +36,7 @@ func UInt64ToString(val uint64) string {
 	return strconv.FormatUint(val, 10)
 }
 
-// ---------- Transfer Intent Helpers ----------
-
-type TransferAllow struct {
-	Limit float64
-	Token sdk.Asset
-}
-
-var validAssets = []string{sdk.AssetHbd.String(), sdk.AssetHive.String()}
-
-func isValidAsset(token string) bool {
-	for _, a := range validAssets {
-		if token == a {
-			return true
-		}
-	}
-	return false
-}
-
-func GetFirstTransferAllow(intents []sdk.Intent) *TransferAllow {
-	for _, intent := range intents {
-		if intent.Type == "transfer.allow" {
-			token := intent.Args["token"]
-			if !isValidAsset(token) {
-				sdk.Abort("invalid intent token")
-			}
-			limitStr := intent.Args["limit"]
-			limit, err := strconv.ParseFloat(limitStr, 64)
-			if err != nil {
-				sdk.Abort("invalid intent limit")
-			}
-			return &TransferAllow{
-				Limit: limit,
-				Token: sdk.Asset(token),
-			}
-		}
-	}
-	return nil
-}
-
 // ---------- Time Helpers ----------
-
-// unixToISO8601 converts a UNIX timestamp (seconds since epoch) into
-// a fixed-format "YYYY-MM-DDThh:mm:ss" string in UTC.
-func unixToISO8601(ts uint64) string {
-	// Split into days and remaining seconds
-	days := int64(ts / 86400)
-	sec := int64(ts % 86400)
-	hour := sec / 3600
-	sec %= 3600
-	minute := sec / 60
-	second := sec % 60
-
-	// Howard Hinnant's civil_from_days algorithm
-	z := days + 719468
-	var era int64
-	if z >= 0 {
-		era = z / 146097
-	} else {
-		era = (z - 146096) / 146097
-	}
-	doe := z - era*146097
-	yoe := (doe - doe/1460 + doe/36524 - doe/146096) / 365
-	y := yoe + era*400
-	doy := doe - (365*yoe + yoe/4 - yoe/100 + yoe/400)
-	mp := (5*doy + 2) / 153
-	d := doy - (153*mp+2)/5 + 1
-	m := mp + 3 - 12*((mp+3)/13)
-	y += (mp + 3) / 13
-
-	year := int(y)
-	month := int(m)
-	day := int(d)
-
-	var buf [19]byte
-	buf[0] = '0' + byte((year/1000)%10)
-	buf[1] = '0' + byte((year/100)%10)
-	buf[2] = '0' + byte((year/10)%10)
-	buf[3] = '0' + byte(year%10)
-	buf[4] = '-'
-	buf[5] = '0' + byte((month/10)%10)
-	buf[6] = '0' + byte(month%10)
-	buf[7] = '-'
-	buf[8] = '0' + byte((day/10)%10)
-	buf[9] = '0' + byte(day%10)
-	buf[10] = 'T'
-	buf[11] = '0' + byte((hour/10)%10)
-	buf[12] = '0' + byte(hour%10)
-	buf[13] = ':'
-	buf[14] = '0' + byte((minute/10)%10)
-	buf[15] = '0' + byte(minute%10)
-	buf[16] = ':'
-	buf[17] = '0' + byte((second/10)%10)
-	buf[18] = '0' + byte(second%10)
-
-	return string(buf[:])
-}
 
 // parseISO8601ToUnix parses "YYYY-MM-DDThh:mm:ss" UTC format into UNIX seconds.
 // Assumes valid ASCII digits.
@@ -235,4 +141,112 @@ func require(cond bool, msg string) {
 	if !cond {
 		sdk.Abort(msg)
 	}
+}
+
+// rd is a binary reader utility over a byte slice.
+type rd struct {
+	b []byte // raw buffer
+	i int    // current read index
+}
+
+func (r *rd) need(n int) {
+	if r.i+n > len(r.b) {
+		sdk.Abort("decode overflow")
+	}
+}
+
+func (r *rd) u8() byte {
+	r.need(1)
+	v := r.b[r.i]
+	r.i++
+	return v
+}
+
+func (r *rd) u16() uint16 {
+	r.need(2)
+	v := binary.BigEndian.Uint16(r.b[r.i : r.i+2])
+	r.i += 2
+	return v
+}
+
+func (r *rd) str() string {
+	l := int(r.u16())
+	r.need(l)
+	v := string(r.b[r.i : r.i+l])
+	r.i += l
+	return v
+}
+
+// u64 reads a uint64 in big-endian format.
+func (r *rd) u64() uint64 {
+	r.need(8)
+	v := binary.BigEndian.Uint64(r.b[r.i : r.i+8])
+	r.i += 8
+	return v
+}
+
+// bytes reads n raw bytes.
+func (r *rd) bytes(n int) []byte {
+	r.need(n)
+	v := r.b[r.i : r.i+n]
+	r.i += n
+	return v
+}
+
+func appendString16(out []byte, s string) []byte {
+	if len(s) > 65535 {
+		sdk.Abort("string too long")
+	}
+	var tmp [2]byte
+	binary.BigEndian.PutUint16(tmp[:], uint16(len(s)))
+	out = append(out, tmp[:]...)
+	return append(out, s...)
+}
+
+// parseFixedPoint3 parses a decimal string with up to 3 fractional digits
+// and returns an integer scaled by 1000 (e.g., "1.23" -> 1230).
+// No allocations, no floats.
+func parseFixedPoint3(s string) uint64 {
+	n := len(s)
+	if n == 0 {
+		return 0
+	}
+
+	var intPart uint64
+	var fracPart uint64
+	var fracDigits int
+	dotSeen := false
+
+	for i := 0; i < n; i++ {
+		c := s[i]
+
+		if c == '.' {
+			require(!dotSeen, "invalid number: multiple dots")
+			dotSeen = true
+			continue
+		}
+
+		require(c >= '0' && c <= '9', "invalid character in number")
+		d := uint64(c - '0')
+
+		if !dotSeen {
+			// intPart = intPart * 10 + d
+			intPart = (intPart << 3) + (intPart << 1) + d // mul by 10 without * op
+		} else {
+			require(fracDigits < 3, "too many fractional digits")
+			fracDigits++
+			fracPart = (fracPart << 3) + (fracPart << 1) + d
+		}
+	}
+
+	// scale fractional part to 3 digits
+	if fracDigits == 0 {
+		fracPart = 0
+	} else if fracDigits == 1 {
+		fracPart *= 100
+	} else if fracDigits == 2 {
+		fracPart *= 10
+	}
+
+	return intPart*1000 + fracPart
 }

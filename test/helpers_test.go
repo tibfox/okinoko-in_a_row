@@ -30,6 +30,8 @@ func SetupContractTest() *test_utils.ContractTest {
 	ct.RegisterContract(ContractID, ownerAddress, ContractWasm)
 	ct.Deposit("hive:someone", 5000, ledgerDb.AssetHive)
 	ct.Deposit("hive:someoneelse", 5000, ledgerDb.AssetHive)
+	ct.Deposit("hive:x", 5000, ledgerDb.AssetHive)
+	ct.Deposit("hive:y", 5000, ledgerDb.AssetHive)
 
 	return &ct
 }
