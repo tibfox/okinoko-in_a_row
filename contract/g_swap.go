@@ -5,13 +5,22 @@ import (
 	"strconv"
 )
 
+//
+// Swap2 (Gomoku opening protocol) helpers.
+// This file tracks opening stones, role decisions,
+// and the compact binary state for the swap procedure.
+//
+
+// swap2Key builds the storage key for a game's swap2 state.
 func swap2Key(id uint64) string { return "g_" + UInt64ToString(id) + "_swap2" }
 
+// initSwap2IfGomokuBinary creates a fresh swap2 state for Gomoku only.
+// Other game modes skip this logic entirely.
 func initSwap2IfGomokuBinary(g *Game) {
 	if g.Type != Gomoku {
 		return
 	}
-	roleX := uint8(1) // opening always proceeds with "X" as the logical next actor
+	roleX := uint8(1)
 	st := &swap2StateBinary{
 		Phase:     swap2PhaseOpening,
 		NextActor: roleX,
@@ -23,6 +32,7 @@ func initSwap2IfGomokuBinary(g *Game) {
 	saveSwap2Binary(g.ID, st)
 }
 
+// saveSwap2Binary encodes the swap2 state into 6 bytes and stores it.
 func saveSwap2Binary(gameID uint64, st *swap2StateBinary) {
 	buf := []byte{
 		st.Phase,
@@ -34,6 +44,9 @@ func saveSwap2Binary(gameID uint64, st *swap2StateBinary) {
 	}
 	sdk.StateSetObject(swap2Key(gameID), string(buf))
 }
+
+// loadSwap2Binary loads the compact swap2 state.
+// Returns nil if no state is found, which means not in swap flow.
 func loadSwap2Binary(gameID uint64) *swap2StateBinary {
 	ptr := sdk.StateGetObject(swap2Key(gameID))
 	if ptr == nil || *ptr == "" {
@@ -51,16 +64,24 @@ func loadSwap2Binary(gameID uint64) *swap2StateBinary {
 		ExtraO:    data[5],
 	}
 }
+
+// CurrentActor returns the wallet expected to act next,
+// based on stored role flags.
 func (st *swap2StateBinary) CurrentActor(g *Game) string {
 	if st.NextActor == 1 {
-		return g.PlayerX // First mover
+		return g.PlayerX
 	}
-	return *g.PlayerO // Second mover
+	return *g.PlayerO
 }
 
+// clearSwap2 removes the swap2 state from storage.
+// Called once the opening phase is over.
 func clearSwap2(id uint64) {
 	sdk.StateSetObject(swap2Key(id), "")
 }
+
+// swapPlaceOpening handles the first 3 stones placement (2 X, 1 O).
+// Validates coords, turn, and board rules while appending the move.
 func swapPlaceOpening(g *Game, st *swap2StateBinary, sender string, a1, a2, a3 string) {
 	require(st.Phase == swap2PhaseOpening, "wrong phase")
 
@@ -93,11 +114,14 @@ func swapPlaceOpening(g *Game, st *swap2StateBinary, sender string, a1, a2, a3 s
 
 	if st.InitX == 2 && st.InitO == 1 {
 		st.Phase = swap2PhaseSwapChoice
-		setNextActor(st, g, 2) // opponent chooses
+		setNextActor(st, g, 2) // opposite player picks action
 	}
 
 	saveSwap2Binary(g.ID, st)
 }
+
+// swapAddExtra is used if the "add" option was chosen.
+// Each side gets to place one more stone before color choice.
 func swapAddExtra(g *Game, st *swap2StateBinary, sender string, a1, a2, a3 string) {
 	require(st.Phase == swap2PhaseExtraPlace, "wrong phase")
 
@@ -130,11 +154,14 @@ func swapAddExtra(g *Game, st *swap2StateBinary, sender string, a1, a2, a3 strin
 
 	if st.ExtraX == 1 && st.ExtraO == 1 {
 		st.Phase = swap2PhaseColorChoice
-		setNextActor(st, g, 1) // creator picks color
+		setNextActor(st, g, 1) // creator selects color
 	}
 
 	saveSwap2Binary(g.ID, st)
 }
+
+// swapFinalColor applies the final color selection when both players
+// have completed the extra-stone flow. If O is chosen, roles flip.
 func swapFinalColor(g *Game, st *swap2StateBinary, sender string, a1 string) {
 	require(st.Phase == swap2PhaseColorChoice, "wrong phase")
 
@@ -154,6 +181,9 @@ func swapFinalColor(g *Game, st *swap2StateBinary, sender string, a1 string) {
 	saveStateBinary(g)
 	EmitSwapPhaseComplete(g.ID, g.PlayerX, *g.PlayerO)
 }
+
+// swapChooseSide handles the choice after the 3-stone stage:
+// stay, swap, or begin extra-stone phase.
 func swapChooseSide(g *Game, st *swap2StateBinary, sender string, choice string) {
 	require(st.Phase == swap2PhaseSwapChoice, "wrong phase")
 
@@ -166,12 +196,12 @@ func swapChooseSide(g *Game, st *swap2StateBinary, sender string, choice string)
 		*g.PlayerO = tmp
 
 	case "stay":
-		// roles unchanged
+		// no change
 
 	case "add":
 		st.Phase = swap2PhaseExtraPlace
 		st.ExtraX, st.ExtraO = 0, 0
-		setNextActor(st, g, 2) // opponent adds stones
+		setNextActor(st, g, 2)
 		saveSwap2Binary(g.ID, st)
 		return
 
@@ -185,11 +215,13 @@ func swapChooseSide(g *Game, st *swap2StateBinary, sender string, choice string)
 	EmitSwapPhaseComplete(g.ID, g.PlayerX, *g.PlayerO)
 }
 
-// NextActor helper for swap2 (binary): role → address
+// setNextActor updates which logical role acts next.
+// 1 = X side, 2 = O side.
 func setNextActor(st *swap2StateBinary, g *Game, role uint8) {
-	// 1=X → PlayerX; 2=O → PlayerO
 	st.NextActor = role
 }
+
+// Actor gives the wallet string for the role currently expected to act.
 func (st *swap2StateBinary) Actor(g *Game) string {
 	if st.NextActor == 1 {
 		return g.PlayerX

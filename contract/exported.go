@@ -4,6 +4,11 @@ import (
 	"okinoko-in_a_row/sdk"
 )
 
+// CreateGame starts a fresh match and stores its basic meta.
+// The full board state is not saved yet, since no moves exist.
+// Caller must pass "type|name|fmc" where fmc is optional.
+// Returns the new game ID as a string pointer.
+//
 //go:wasmexport g_create
 func CreateGame(payload *string) *string {
 	gt, name, fmc := parseCreateArgs(payload)
@@ -23,7 +28,9 @@ func CreateGame(payload *string) *string {
 	return &ret
 }
 
-// ---------- Entry: Join ----------
+// JoinGame lets a second player enter a waiting match.
+// Handles optional buy-first-move logic and bet escrow.
+// Becomes active once joined; swap2 pre-phase init fires for Gomoku.
 //
 //go:wasmexport g_join
 func JoinGame(payload *string) *string {
@@ -55,8 +62,11 @@ func JoinGame(payload *string) *string {
 	return nil
 }
 
-// ---------- Entry: Move ----------
-
+// MakeMove appends a player move, validates turn rules,
+// updates winner/draw state, and emits move events.
+// Swap2 logic is guarded, so normal moves cannot interfere
+// while the opening phase is still running.
+//
 //go:wasmexport g_move
 func MakeMove(payload *string) *string {
 	in := *payload
@@ -96,6 +106,10 @@ func MakeMove(payload *string) *string {
 	return nil
 }
 
+// ClaimTimeout gives victory to the non-timing-out player.
+// Works for normal flow and swap2 opening flow.
+// The caller must be the rightful winner (not just anybody).
+//
 //go:wasmexport g_timeout
 func ClaimTimeout(payload *string) *string {
 	in := *payload
@@ -149,8 +163,10 @@ func ClaimTimeout(payload *string) *string {
 	return nil
 }
 
-// ---------- Entry: Resign ----------
-
+// Resign lets a player concede. If no opponent joined yet,
+// creator simply cancels the lobby and any stake is refunded.
+// Once active, the other side becomes the winner.
+//
 //go:wasmexport g_resign
 func Resign(payload *string) *string {
 	in := *payload
@@ -197,8 +213,10 @@ func Resign(payload *string) *string {
 	return nil
 }
 
-// ---------- Entry: Swap2 (Gomoku opening) ----------
-
+// SwapMove processes swap2 opening sub-moves:
+// place initial stones, choose swap/stay/add, extra stones, or color.
+// Only valid during Gomoku opening and turn-restricted.
+//
 //go:wasmexport g_swap
 func SwapMove(payload *string) *string {
 	in := *payload
@@ -236,6 +254,10 @@ func SwapMove(payload *string) *string {
 	return nil
 }
 
+// GetGame returns a compact string describing match metadata
+// followed by a flat ASCII board. Used by clients to render
+// state without replaying the game engine logic.
+//
 //go:wasmexport g_get
 func GetGame(payload *string) *string {
 	in := *payload

@@ -9,6 +9,9 @@ import (
 func gameMetaKey(id uint64) string  { return "g_" + UInt64ToString(id) + "_meta" }
 func gameStateKey(id uint64) string { return "g_" + UInt64ToString(id) + "_state" }
 
+// saveMetaBinary packs game info that never changes after create/join,
+// like name, creator, asset choice, and timestamps. The format is fixed-width
+// plus small length-prefix strings so it stays compact on-chain.
 func saveMetaBinary(g *Game) {
 	var out []byte
 
@@ -78,8 +81,9 @@ func saveMetaBinary(g *Game) {
 	sdk.StateSetObject(gameMetaKey(g.ID), string(out))
 }
 
-// loadMetaBinary decodes binary metadata into a partially initialized Game struct.
-// You must still load the state (status/winner/player roles) and moves separately.
+// loadMetaBinary reads the immutable game metadata from storage.
+// It does not touch dynamic values like turn or winner; caller must
+// layer state / moves on top afterwards.
 func loadMetaBinary(id uint64) *Game {
 	ptr := sdk.StateGetObject(gameMetaKey(id))
 	require(ptr != nil && *ptr != "", "meta missing")
@@ -161,7 +165,8 @@ func loadMetaBinary(id uint64) *Game {
 	return g
 }
 
-// loadGame reconstructs a Game from binary metadata, state, and moves.
+// loadGame reconstructs a Game by combining metadata, state, and last-move info.
+// Mostly used by entrypoints to run logic against the current match state.
 func loadGame(id uint64) *Game {
 	// ---- Load metadata (binary) ----
 	ptr := sdk.StateGetObject(gameMetaKey(id))
@@ -188,7 +193,9 @@ func loadGame(id uint64) *Game {
 	return g
 }
 
-// saveStateBinary writes game state (status, winner, PlayerX, PlayerO) in compact binary form.
+// saveStateBinary writes the parts of a game that can change during play:
+// status, winner if any, and player roles. PlayerX is always present,
+// PlayerO optional until a join happened.
 func saveStateBinary(g *Game) {
 	out := make([]byte, 0, 64)
 
@@ -217,6 +224,8 @@ func saveStateBinary(g *Game) {
 	sdk.StateSetObject(gameStateKey(g.ID), string(out))
 }
 
+// loadStateBinary decodes the dynamic portion of a game from its binary blob.
+// Caller already has the Game struct from metadata, so this just fills the rest.
 func loadStateBinary(g *Game, data []byte) {
 	r := &rd{b: data}
 	// Status
@@ -239,13 +248,10 @@ func loadStateBinary(g *Game, data []byte) {
 	}
 }
 
-type TransferAllow struct {
-	Limit float64
-	Token sdk.Asset
-}
-
 var validAssets = []string{sdk.AssetHbd.String(), sdk.AssetHive.String()}
 
+// isValidAsset checks we only allow expected liquid tokens.
+// Prevents random arbitrary symbols, basic safety guard.
 func isValidAsset(token string) bool {
 	for _, a := range validAssets {
 		if token == a {
@@ -255,6 +261,8 @@ func isValidAsset(token string) bool {
 	return false
 }
 
+// GetFirstTransferAllow scans intents for one transfer.allow
+// instruction and returns its parsed token+limit. Nil if missing.
 func GetFirstTransferAllow(intents []sdk.Intent) *TransferAllow {
 	for _, intent := range intents {
 		if intent.Type == "transfer.allow" {

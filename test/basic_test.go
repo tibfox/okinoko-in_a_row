@@ -204,7 +204,7 @@ func TestC4PlayGameCreatorWin(t *testing.T) {
 	CallContract(t, ct, "g_move", []byte("0|0|0"), nil, "hive:someone", true, uint(1_000_000_000), "", nil)
 	CallContract(t, ct, "g_move", []byte("0|0|1"), nil, "hive:someoneelse", true, uint(1_000_000_000), "", nil)
 	CallContract(t, ct, "g_move", []byte("0|0|0"), nil, "hive:someone", true, uint(1_000_000_000), "", nil)
-	CallContract(t, ct, "g_move", []byte("0|0|1"), nil, "hive:someoneelse", true, uint(1_000_000_000), "", nil)
+	CallContract(t, ct, "g_move", []byte("0|0|6"), nil, "hive:someoneelse", true, uint(1_000_000_000), "", nil)
 	CallContract(t, ct, "g_move", []byte("0|0|0"), nil, "hive:someone", true, uint(1_000_000_000), "", nil)
 	CallContract(t, ct, "g_move", []byte("0|0|1"), nil, "hive:someoneelse", false, uint(1_000_000_000), "", nil)
 	CallContract(t, ct, "g_get", []byte("0"), nil, "hive:someone", true, uint(1_000_000_000), "", nil)
