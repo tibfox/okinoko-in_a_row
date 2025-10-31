@@ -284,25 +284,8 @@ func GetFirstTransferAllow(intents []sdk.Intent) *TransferAllow {
 	return nil
 }
 
-func boardDimensions(gt GameType) (int, int) {
-	switch gt {
-	case TicTacToe:
-		return 3, 3
-	case TicTacToe5:
-		return 5, 5
-	case Squava:
-		return 5, 5
-	case ConnectFour:
-		return 6, 7
-	case Gomoku:
-		return 15, 15
-	default:
-		sdk.Abort("invalid game type")
-	}
-	return 0, 0
-}
-
-// nextToPlay returns X or O based on moves parity (even -> X, odd -> O).
+// nextToPlay chooses side by move count parity. X starts,
+// and it flips each turn. Used for timeout calc and sanity checks.
 func nextToPlay(moves uint64) Cell {
 	if moves%2 == 0 {
 		return X
@@ -310,8 +293,8 @@ func nextToPlay(moves uint64) Cell {
 	return O
 }
 
-// ---------- Player check ----------
-
+// isPlayer checks if the given address matches one of the seats.
+// O may not exist yet for lobby state, so we guard pointer.
 func isPlayer(g *Game, addr string) bool {
 	if addr == g.PlayerX {
 		return true
@@ -319,6 +302,9 @@ func isPlayer(g *Game, addr string) bool {
 	return g.PlayerO != nil && addr == *g.PlayerO
 }
 
+// requireSenderMark returns X or O depending on which side
+// made the call. Panics (via abort) if unknown sender. Handy
+// to guard move or resign flows.
 func requireSenderMark(g *Game, sender string) Cell {
 	if sender == g.PlayerX {
 		return X
