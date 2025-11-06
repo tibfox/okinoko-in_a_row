@@ -14,11 +14,12 @@ import "okinoko-in_a_row/sdk"
 type GameType uint8
 
 const (
-	TicTacToe   GameType = 1
-	ConnectFour GameType = 2
-	Gomoku      GameType = 3
-	TicTacToe5  GameType = 4
-	Squava      GameType = 5
+	TicTacToe       GameType = 1
+	ConnectFour     GameType = 2
+	Gomoku          GameType = 3
+	TicTacToe5      GameType = 4
+	Squava          GameType = 5
+	GomokuFreestyle GameType = 6
 )
 
 // Cell is the stone or mark on the grid.

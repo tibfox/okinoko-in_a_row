@@ -202,6 +202,7 @@ func swapChooseSide(g *Game, st *swap2StateBinary, sender string, choice string)
 	st.Phase = swap2PhaseNone
 	clearSwap2(g.ID)
 	saveStateBinary(g)
+
 }
 
 // setNextActor updates which logical role acts next.

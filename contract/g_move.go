@@ -139,6 +139,8 @@ func winLengthFor(g *Game) (int, bool) {
 		return 4, false
 	case Gomoku:
 		return 5, true
+	case GomokuFreestyle:
+		return 5, false
 	default:
 		sdk.Abort("invalid game type")
 	}

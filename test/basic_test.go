@@ -369,3 +369,44 @@ func TestGSetupLoopFMP(t *testing.T) {
 
 	// CallContract(t, ct, "g_get", []byte("0"), nil, "hive:someone", true, uint(1_000_000_000), "", nil)
 }
+
+func TestGSetupLoopStay(t *testing.T) {
+	ct := SetupContractTest()
+	// create Gomoku game - waiting for someone to join
+	CallContract(t, ct, "g_create", []byte("3|Gomoku 4 Life|"),
+		[]contracts.Intent{{Type: "transfer.allow", Args: map[string]string{"limit": "1.000", "token": "hive"}}},
+		"hive:someone", true, uint(1_000_000_000), "", nil)
+	// someonelese joined
+	CallContract(t, ct, "g_join", []byte("0"),
+		[]contracts.Intent{{Type: "transfer.allow", Args: map[string]string{"limit": "1.000", "token": "hive"}}},
+		"hive:someoneelse", true, uint(1_000_000_000), "", nil)
+	// swap2 opening phase
+	//creator places 3 stones
+	CallContract(t, ct, "g_swap", []byte("0|place|7-7-1|7-8-2|8-7-1"), nil, "hive:someone", true, uint(1_000_000_000), "", nil)
+	// opponent picks stay and picks O
+	CallContract(t, ct, "g_swap", []byte("0|choose|stay"), nil, "hive:someoneelse", true, uint(1_000_000_000), "", nil)
+	// creator should not be able to make a move
+	CallContract(t, ct, "g_move", []byte("0|8|8"), nil, "hive:someone", false, uint(1_000_000_000), "", nil)
+	// opponent should be able to make a move
+	CallContract(t, ct, "g_move", []byte("0|8|8"), nil, "hive:someoneelse", true, uint(1_000_000_000), "", nil)
+}
+func TestGSetupLoopSwap(t *testing.T) {
+	ct := SetupContractTest()
+	// create Gomoku game - waiting for someone to join
+	CallContract(t, ct, "g_create", []byte("3|Gomoku 4 Life|"),
+		[]contracts.Intent{{Type: "transfer.allow", Args: map[string]string{"limit": "1.000", "token": "hive"}}},
+		"hive:someone", true, uint(1_000_000_000), "", nil)
+	// someonelese joined
+	CallContract(t, ct, "g_join", []byte("0"),
+		[]contracts.Intent{{Type: "transfer.allow", Args: map[string]string{"limit": "1.000", "token": "hive"}}},
+		"hive:someoneelse", true, uint(1_000_000_000), "", nil)
+	// swap2 opening phase
+	//creator places 3 stones
+	CallContract(t, ct, "g_swap", []byte("0|place|7-7-1|7-8-2|8-7-1"), nil, "hive:someone", true, uint(1_000_000_000), "", nil)
+	// opponent picks swap and takes X
+	CallContract(t, ct, "g_swap", []byte("0|choose|swap"), nil, "hive:someoneelse", true, uint(1_000_000_000), "", nil)
+	// opponent should not be able to make a move
+	CallContract(t, ct, "g_move", []byte("0|8|8"), nil, "hive:someoneelse", false, uint(1_000_000_000), "", nil)
+	// creator should be able to make a move
+	CallContract(t, ct, "g_move", []byte("0|8|8"), nil, "hive:someone", true, uint(1_000_000_000), "", nil)
+}

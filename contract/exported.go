@@ -78,6 +78,7 @@ func MakeMove(payload *string) *string {
 
 	sender := *sdk.GetEnvKey("msg.sender")
 	g := loadGame(gameID)
+
 	require(g.Status == InProgress, "game not in progress")
 	require(isPlayer(g, sender), "not a player")
 
