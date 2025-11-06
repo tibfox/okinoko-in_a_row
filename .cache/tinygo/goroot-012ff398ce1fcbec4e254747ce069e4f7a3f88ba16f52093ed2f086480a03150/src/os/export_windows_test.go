@@ -1,0 +1,1 @@
+/usr/local/tinygo/src/os/export_windows_test.go

@@ -2,6 +2,7 @@ package main
 
 import (
 	"okinoko-in_a_row/sdk"
+	"strings"
 )
 
 // CreateGame starts a fresh match and stores its basic meta.
@@ -19,10 +20,13 @@ func CreateGame(payload *string) *string {
 
 	g := initNewGame(gt, name, sender, ts, id, fmc)
 	applyOptionalBetOnCreate(g)
+	if fmc > 0 {
+		require(g.GameAsset != nil, "first-move purchase only available in betting games")
+	}
 
 	saveMetaBinary(g) // no state write yet
 	setGameCount(id + 1)
-	EmitGameCreated(g.ID, sender)
+	EmitGameCreated(g.ID, sender, g.GameBetAmount, g.GameAsset, uint8(g.Type), g.FirstMoveCosts, g.Name, ts)
 
 	ret := UInt64ToString(g.ID)
 	return &ret
@@ -54,11 +58,8 @@ func JoinGame(payload *string) *string {
 	saveStateBinary(g)
 
 	initSwap2IfGomokuBinary(g)
-
-	EmitGameJoined(g.ID, joiner)
-	if wants {
-		EmitFirstMoveRightsPurchased(g.ID, joiner)
-	}
+	ts := parseISO8601ToUnix(*sdk.GetEnvKey("block.timestamp"))
+	EmitGameJoined(g.ID, joiner, wants, ts)
 	return nil
 }
 
@@ -91,16 +92,16 @@ func MakeMove(payload *string) *string {
 	require(row >= 0 && row < rows && col >= 0 && col < cols, "invalid move")
 
 	grid, mvCount := reconstructBoard(g)
-	currentTurn := computeCurrentTurn(g, mvCount)
+	currentTurn := computeCurrentTurn(mvCount)
 	mark := requireSenderMark(g, sender)
 	require(mark == currentTurn, "not your turn")
 
 	r, c := applyMoveOnGrid(g, grid, row, col, mark)
 	newMv := appendMoveCommit(g, mvCount, r, c)
+	ts := parseISO8601ToUnix(*sdk.GetEnvKey("block.timestamp"))
+	EmitGameMoveMade(g.ID, sender, uint8(r*cols+c), ts)
 
-	EmitGameMoveMade(g.ID, sender, uint8(r*cols+c))
-
-	if finalizeIfWinOrDraw(g, grid, r, c, mark, newMv) {
+	if finalizeIfWinOrDraw(g, grid, r, c, mark, newMv, ts) {
 		return nil
 	}
 	return nil
@@ -205,9 +206,9 @@ func Resign(payload *string) *string {
 	g.LastMoveAt = parseISO8601ToUnix(*sdk.GetEnvKey("block.timestamp"))
 	saveStateBinary(g)
 	clearSwap2(g.ID)
-	EmitGameResigned(g.ID, *sender)
+	EmitGameResigned(g.ID, *sender, g.LastMoveAt)
 	if g.Winner != nil {
-		EmitGameWon(g.ID, *g.Winner)
+		EmitGameWon(g.ID, *g.Winner, g.LastMoveAt)
 	}
 
 	return nil
@@ -218,14 +219,12 @@ func Resign(payload *string) *string {
 // Only valid during Gomoku opening and turn-restricted.
 //
 //go:wasmexport g_swap
+//go:wasmexport g_swap
 func SwapMove(payload *string) *string {
 	in := *payload
 	gameID := parseU64Fast(nextField(&in))
 	op := nextField(&in)
-	a1 := nextField(&in)
-	a2 := nextField(&in)
-	a3 := nextField(&in)
-	require(in == "", "too many arguments")
+	require(op != "", "missing swap operation")
 
 	g := loadGame(gameID)
 	require(g.Type == Gomoku, "swap only for gomoku")
@@ -238,15 +237,80 @@ func SwapMove(payload *string) *string {
 	sender := *sdk.GetEnvKey("msg.sender")
 	require(sender == st.Actor(g), "not your opening turn")
 
+	_, cols := boardDimensions(g.Type)
+	ts := parseISO8601ToUnix(*sdk.GetEnvKey("block.timestamp"))
+
 	switch op {
+
+	// ────────────── PLACE ──────────────
 	case "place":
-		swapPlaceOpening(g, st, sender, a1, a2, a3)
-	case "choose":
-		swapChooseSide(g, st, sender, a1)
+		placements := []string{}
+		for in != "" {
+			part := nextField(&in)
+			if part != "" {
+				placements = append(placements, part)
+			}
+		}
+		require(len(placements) > 0, "no placement data provided")
+		require(len(placements) <= 3, "too many placements for place")
+
+		for _, p := range placements {
+			parts := strings.Split(p, "-")
+			require(len(parts) == 3, "invalid placement triple (expected row-col-color)")
+
+			rowStr, colStr, colorStr := parts[0], parts[1], parts[2]
+
+			swapPlaceOpening(g, st, sender, rowStr, colStr, colorStr)
+
+			row := int(parseU8Fast(rowStr))
+			col := int(parseU8Fast(colStr))
+			color := uint8(parseU8Fast(colorStr))
+			cell := uint8(row*cols + col)
+
+			EmitSwapEvent(g.ID, sender, "place", &cell, &color, nil, ts)
+		}
+
+	// ────────────── ADD ──────────────
 	case "add":
-		swapAddExtra(g, st, sender, a1, a2, a3)
+		adds := []string{}
+		for in != "" {
+			part := nextField(&in)
+			if part != "" {
+				adds = append(adds, part)
+			}
+		}
+		require(len(adds) > 0, "no add data provided")
+		require(len(adds) <= 2, "too many add placements")
+
+		for _, a := range adds {
+			parts := strings.Split(a, "-")
+			require(len(parts) == 3, "invalid add triple (expected row-col-color)")
+
+			rowStr, colStr, colorStr := parts[0], parts[1], parts[2]
+
+			swapAddExtra(g, st, sender, rowStr, colStr, colorStr)
+
+			row := int(parseU8Fast(rowStr))
+			col := int(parseU8Fast(colStr))
+			color := uint8(parseU8Fast(colorStr))
+			cell := uint8(row*cols + col)
+
+			EmitSwapEvent(g.ID, sender, "add", &cell, &color, nil, ts)
+		}
+
+	// ────────────── CHOOSE ──────────────
+	case "choose":
+		choice := nextField(&in) // "swap" | "stay" | "add"
+		swapChooseSide(g, st, sender, choice)
+		EmitSwapEvent(g.ID, sender, "choose", nil, nil, &choice, ts)
+
+	// ────────────── COLOR ──────────────
 	case "color":
-		swapFinalColor(g, st, sender, a1)
+		colorStr := nextField(&in)
+		swapFinalColor(g, st, sender, colorStr)
+		color := uint8(parseU8Fast(colorStr))
+		EmitSwapEvent(g.ID, sender, "color", nil, &color, nil, ts)
+
 	default:
 		sdk.Abort("invalid swap op")
 	}

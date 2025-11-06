@@ -1,6 +1,9 @@
 package main
 
-import "okinoko-in_a_row/sdk"
+import (
+	"math"
+	"okinoko-in_a_row/sdk"
+)
 
 //
 // Join-phase helpers for handling wagers and role assignment.
@@ -26,7 +29,9 @@ func wantsFirstMoveAndAssertFunding(g *Game) (wants bool, baseBet, fmCost uint64
 	ta := GetFirstTransferAllow(sdk.GetEnv().Intents)
 	require(ta != nil, "intent missing")
 
-	intentAmt := uint64(ta.Limit * 1000)
+	// ✅ FIX: use rounding to avoid float truncation
+	intentAmt := uint64(math.Round(ta.Limit * 1000))
+
 	require(ta.Token == *g.GameAsset, "wrong bet token")
 	require(intentAmt >= baseBet, "must cover base bet")
 

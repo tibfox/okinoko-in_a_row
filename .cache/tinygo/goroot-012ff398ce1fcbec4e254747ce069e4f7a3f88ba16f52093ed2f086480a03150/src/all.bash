@@ -1,0 +1,1 @@
+/usr/local/go/src/all.bash

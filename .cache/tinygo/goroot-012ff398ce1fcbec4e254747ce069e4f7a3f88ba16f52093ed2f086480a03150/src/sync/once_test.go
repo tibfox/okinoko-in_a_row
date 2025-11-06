@@ -1,0 +1,1 @@
+/usr/local/tinygo/src/sync/once_test.go

@@ -1,0 +1,1 @@
+/usr/local/tinygo/src/os/file_windows.go

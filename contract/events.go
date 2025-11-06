@@ -42,71 +42,81 @@ func emitEvent(eventType string, kv ...string) {
 //
 
 // EmitGameCreated announces a new lobby was created.
-func EmitGameCreated(id uint64, by string) {
+func EmitGameCreated(id uint64, by string, betAmount *uint64, betAsset *sdk.Asset, gameType uint8, firstMoveCost *uint64, name string, ts uint64) {
+	ba := uint64(0)
+	fmc := uint64(0)
+	aa := ""
+	if betAmount != nil {
+		ba = *betAmount
+		aa = betAsset.String()
+	}
+	if firstMoveCost != nil {
+		fmc = *firstMoveCost
+	}
 	emitEvent("c",
 		"id", UInt64ToString(id),
 		"by", by,
+		"am", UInt64ToString(ba),
+		"aa", aa,
+		"gt", UInt64ToString(uint64(gameType)),
+		"fmc", UInt64ToString(uint64(fmc)),
+		"n", name,
+		"ts", UInt64ToString(ts),
 	)
 }
 
 // EmitGameJoined signals an opponent joined a game.
-func EmitGameJoined(id uint64, joiner string) {
+func EmitGameJoined(id uint64, joiner string, fmp bool, ts uint64) {
 	emitEvent("j",
 		"id", UInt64ToString(id),
 		"by", joiner,
+		"fmp", strconv.FormatBool(fmp),
+		"ts", UInt64ToString(ts),
 	)
 }
 
 // EmitGameMoveMade records a move coordinate as a single pos index (row*cols+col).
-func EmitGameMoveMade(id uint64, by string, pos uint8) {
+func EmitGameMoveMade(id uint64, by string, pos uint8, ts uint64) {
 	emitEvent("m",
 		"id", UInt64ToString(id),
 		"by", by,
 		"cell", UInt64ToString(uint64(pos)),
+		"ts", UInt64ToString(ts),
 	)
 }
 
 // EmitGameWon emits a final winner message once a match is decided.
-func EmitGameWon(id uint64, winner string) {
+func EmitGameWon(id uint64, winner string, ts uint64) {
 	emitEvent("w",
 		"id", UInt64ToString(id),
 		"winner", winner,
+		"ts", UInt64ToString(ts),
 	)
 }
 
 // EmitGameResigned logs a resignation, so UIs can highlight that reason.
-func EmitGameResigned(id uint64, resignedAddress string) {
+func EmitGameResigned(id uint64, resignedAddress string, ts uint64) {
 	emitEvent("r",
 		"id", UInt64ToString(id),
 		"resigner", resignedAddress,
+		"ts", UInt64ToString(ts),
 	)
 }
 
 // EmitGameTimedOut fires when a player failed to act before the timeout limit.
-func EmitGameTimedOut(id uint64, timedOutPlayer string) {
+func EmitGameTimedOut(id uint64, timedOutPlayer string, ts uint64) {
 	emitEvent("t",
 		"id", UInt64ToString(id),
 		"timedOut", timedOutPlayer,
+		"ts", UInt64ToString(ts),
 	)
 }
 
 // EmitGameDraw announces a draw conclusion.
-func EmitGameDraw(id uint64) {
-	emitEvent("draw",
+func EmitGameDraw(id uint64, ts uint64) {
+	emitEvent("d",
 		"id", UInt64ToString(id),
-	)
-}
-
-//
-// Betting / first-move rights
-//
-
-// EmitFirstMoveRightsPurchased logs when someone pays for the opening move right.
-// Some frontends may use this to show a little flair or reminder.
-func EmitFirstMoveRightsPurchased(id uint64, player string) {
-	emitEvent("fmc",
-		"id", UInt64ToString(id),
-		"player", player,
+		"ts", UInt64ToString(ts),
 	)
 }
 
@@ -114,46 +124,26 @@ func EmitFirstMoveRightsPurchased(id uint64, player string) {
 // Swap2 (Gomoku special opening rule) events
 //
 
-// EmitSwapOpeningPlaced records a stone placement during the initial Swap2 trio.
-func EmitSwapOpeningPlaced(id uint64, by string, r, c, cell, x, o uint8) {
-	emitEvent("s_op",
+func EmitSwapEvent(id uint64, by string, op string, cell *uint8, color *uint8, choice *string, ts uint64) {
+	ce := ""
+	co := ""
+	ch := ""
+	if cell != nil {
+		ce = UInt64ToString(uint64(*cell))
+	}
+	if color != nil {
+		co = UInt64ToString(uint64(*color))
+	}
+	if choice != nil {
+		ch = *choice
+	}
+	emitEvent("s",
 		"id", UInt64ToString(id),
 		"by", by,
-		"r", UInt64ToString(uint64(r)),
-		"c", UInt64ToString(uint64(c)),
-		"cell", UInt64ToString(uint64(cell)),
-		"x", UInt64ToString(uint64(x)),
-		"o", UInt64ToString(uint64(o)),
-	)
-}
-
-// EmitSwapExtraPlaced logs the bonus stone round when the chooser requests "add" mode.
-func EmitSwapExtraPlaced(id uint64, by string, row, col, cell, extraX, extraO uint8) {
-	emitEvent("s_ep",
-		"id", UInt64ToString(id),
-		"by", by,
-		"row", strconv.FormatUint(uint64(row), 10),
-		"col", strconv.FormatUint(uint64(col), 10),
-		"cell", strconv.FormatUint(uint64(cell), 10),
-		"extraX", strconv.FormatUint(uint64(extraX), 10),
-		"extraO", strconv.FormatUint(uint64(extraO), 10),
-	)
-}
-
-// EmitSwapChoiceMade notes when a side swap / stay / add choice is taken.
-func EmitSwapChoiceMade(id uint64, by, choice string) {
-	emitEvent("s_cc",
-		"id", UInt64ToString(id),
-		"by", by,
-		"chosenColor", choice,
-	)
-}
-
-// EmitSwapPhaseComplete marks the end of the Swap2 opening flow and final color roles.
-func EmitSwapPhaseComplete(id uint64, creator, opponent string) {
-	emitEvent("s_pc",
-		"id", UInt64ToString(id),
-		"by", creator,
-		"opponent", opponent,
+		"op", op,
+		"ce", ce,
+		"co", co,
+		"ch", ch,
+		"ts", UInt64ToString(ts),
 	)
 }

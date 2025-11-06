@@ -55,7 +55,7 @@ func parseCreateArgs(payload *string) (gt GameType, name string, fmc uint64) {
 	fmcString := nextField(&in)
 
 	require(in == "", "too many arguments")
-	require(!strings.Contains(name, "|"), "name must not contain '|'")
+	require(!strings.Contains(name, "|"), "name must not contain '|'") // not necessary but cleaner
 
 	gt = GameType(parseU8Fast(typStr))
 	require(

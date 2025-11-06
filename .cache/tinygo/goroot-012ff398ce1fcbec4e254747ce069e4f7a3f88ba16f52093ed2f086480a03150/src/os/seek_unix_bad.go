@@ -1,0 +1,1 @@
+/usr/local/tinygo/src/os/seek_unix_bad.go

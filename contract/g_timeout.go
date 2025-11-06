@@ -24,6 +24,6 @@ func finishGameTimeoutCommon(g *Game, winner, timedOut string) {
 		transferPot(g, winner)
 	}
 
-	EmitGameTimedOut(g.ID, timedOut)
-	EmitGameWon(g.ID, winner)
+	EmitGameTimedOut(g.ID, timedOut, now)
+	EmitGameWon(g.ID, winner, now)
 }

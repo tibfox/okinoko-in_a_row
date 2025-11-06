@@ -96,17 +96,11 @@ func readMoveBinary(id uint64, n uint64, createdAt uint64) (row, col int, ts uin
 // computeCurrentTurn figures out whose turn it is based on the
 // stored role order and number of moves so far. Needed because
 // roles might swap during join due to first-move purchase.
-func computeCurrentTurn(g *Game, mvCount uint64) Cell {
+func computeCurrentTurn(mvCount uint64) Cell {
+	// X always starts. Then alternate.
 	turn := X
-	if g.Creator != g.PlayerX {
-		turn = O
-	}
 	if mvCount%2 == 1 {
-		if turn == X {
-			turn = O
-		} else {
-			turn = X
-		}
+		turn = O
 	}
 	return turn
 }
@@ -154,8 +148,9 @@ func winLengthFor(g *Game) (int, bool) {
 // finalizeIfWinOrDraw checks win/draw conditions, updates game state,
 // handles payouts, emits events, and returns whether the game ended.
 // Some games (Squava) have a "lose by making 3" rule, handled here.
-func finalizeIfWinOrDraw(g *Game, grid [][]Cell, row, col int, mark Cell, mvCount uint64) (finished bool) {
+func finalizeIfWinOrDraw(g *Game, grid [][]Cell, row, col int, mark Cell, mvCount uint64, ts uint64) (finished bool) {
 	winLen, exact := winLengthFor(g)
+
 	if checkPatternGrid(grid, row, col, winLen, exact) {
 		if mark == X {
 			w := g.PlayerX
@@ -168,7 +163,7 @@ func finalizeIfWinOrDraw(g *Game, grid [][]Cell, row, col int, mark Cell, mvCoun
 			transferPot(g, *g.Winner)
 		}
 		saveStateBinary(g)
-		EmitGameWon(g.ID, *g.Winner)
+		EmitGameWon(g.ID, *g.Winner, ts)
 		return true
 	}
 
@@ -185,7 +180,7 @@ func finalizeIfWinOrDraw(g *Game, grid [][]Cell, row, col int, mark Cell, mvCoun
 			transferPot(g, *g.Winner)
 		}
 		saveStateBinary(g)
-		EmitGameWon(g.ID, *g.Winner)
+		EmitGameWon(g.ID, *g.Winner, ts)
 		return true
 	}
 
@@ -197,7 +192,7 @@ func finalizeIfWinOrDraw(g *Game, grid [][]Cell, row, col int, mark Cell, mvCoun
 			splitPot(g)
 		}
 		saveStateBinary(g)
-		EmitGameDraw(g.ID)
+		EmitGameDraw(g.ID, ts)
 		return true
 	}
 

@@ -1,0 +1,1 @@
+/usr/local/tinygo/src/syscall/syscall_libc_wasi.go

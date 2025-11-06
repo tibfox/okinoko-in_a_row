@@ -2,7 +2,6 @@ package main
 
 import (
 	"okinoko-in_a_row/sdk"
-	"strconv"
 )
 
 //
@@ -110,8 +109,6 @@ func swapPlaceOpening(g *Game, st *swap2StateBinary, sender string, a1, a2, a3 s
 		st.InitO++
 	}
 
-	EmitSwapOpeningPlaced(g.ID, sender, uint8(row), uint8(col), uint8(cell), st.InitX, st.InitO)
-
 	if st.InitX == 2 && st.InitO == 1 {
 		st.Phase = swap2PhaseSwapChoice
 		setNextActor(st, g, 2) // opposite player picks action
@@ -150,8 +147,6 @@ func swapAddExtra(g *Game, st *swap2StateBinary, sender string, a1, a2, a3 strin
 		st.ExtraO++
 	}
 
-	EmitSwapExtraPlaced(g.ID, sender, uint8(row), uint8(col), uint8(cell), st.ExtraX, st.ExtraO)
-
 	if st.ExtraX == 1 && st.ExtraO == 1 {
 		st.Phase = swap2PhaseColorChoice
 		setNextActor(st, g, 1) // creator selects color
@@ -168,8 +163,6 @@ func swapFinalColor(g *Game, st *swap2StateBinary, sender string, a1 string) {
 	ch := parseU8Fast(a1)
 	require(ch == 1 || ch == 2, "invalid color")
 
-	EmitSwapChoiceMade(g.ID, sender, strconv.FormatUint(uint64(ch), 10))
-
 	if ch == 2 {
 		tmp := g.PlayerX
 		g.PlayerX = *g.PlayerO
@@ -179,15 +172,12 @@ func swapFinalColor(g *Game, st *swap2StateBinary, sender string, a1 string) {
 	st.Phase = swap2PhaseNone
 	clearSwap2(g.ID)
 	saveStateBinary(g)
-	EmitSwapPhaseComplete(g.ID, g.PlayerX, *g.PlayerO)
 }
 
 // swapChooseSide handles the choice after the 3-stone stage:
 // stay, swap, or begin extra-stone phase.
 func swapChooseSide(g *Game, st *swap2StateBinary, sender string, choice string) {
 	require(st.Phase == swap2PhaseSwapChoice, "wrong phase")
-
-	EmitSwapChoiceMade(g.ID, sender, choice)
 
 	switch choice {
 	case "swap":
@@ -212,7 +202,6 @@ func swapChooseSide(g *Game, st *swap2StateBinary, sender string, choice string)
 	st.Phase = swap2PhaseNone
 	clearSwap2(g.ID)
 	saveStateBinary(g)
-	EmitSwapPhaseComplete(g.ID, g.PlayerX, *g.PlayerO)
 }
 
 // setNextActor updates which logical role acts next.

@@ -1,0 +1,1 @@
+/usr/local/tinygo/src/syscall/errno_wasip2.go

@@ -1,6 +1,8 @@
 package main
 
-import "okinoko-in_a_row/sdk"
+import (
+	"okinoko-in_a_row/sdk"
+)
 
 //
 // Board reconstruction + helpers.
