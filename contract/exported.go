@@ -83,7 +83,7 @@ func MakeMove(payload *string) *string {
 	require(isPlayer(g, sender), "not a player")
 
 	// gate swap2
-	if g.Type == Gomoku {
+	if g.Type == Gomoku || g.Type == GomokuFreestyle {
 		if st := loadSwap2Binary(g.ID); st != nil && st.Phase != swap2PhaseNone {
 			sdk.Abort("opening phase in progress; use g_swap")
 		}
@@ -98,7 +98,7 @@ func MakeMove(payload *string) *string {
 	require(mark == currentTurn, "not your turn")
 
 	r, c := applyMoveOnGrid(g, grid, row, col, mark)
-	newMv := appendMoveCommit(g, mvCount, r, c)
+	newMv := appendMoveCommit(g, mvCount, r, c, mark)
 	ts := parseISO8601ToUnix(*sdk.GetEnvKey("block.timestamp"))
 	EmitGameMoveMade(g.ID, sender, uint8(r*cols+c), ts)
 
@@ -129,7 +129,7 @@ func ClaimTimeout(payload *string) *string {
 	require(now > g.LastMoveAt+gameTimeout, "timeout not reached")
 
 	// Swap2 case
-	if g.Type == Gomoku {
+	if g.Type == Gomoku || g.Type == GomokuFreestyle {
 		if st := loadSwap2Binary(g.ID); st != nil && st.Phase != swap2PhaseNone {
 			if st.NextActor == 1 {
 				// X due → O wins
@@ -228,7 +228,7 @@ func SwapMove(payload *string) *string {
 	require(op != "", "missing swap operation")
 
 	g := loadGame(gameID)
-	require(g.Type == Gomoku, "swap only for gomoku")
+	require(g.Type == Gomoku || g.Type == GomokuFreestyle, "swap only for gomoku")
 	require(g.Opponent != nil && g.PlayerO != nil, "opponent required")
 	require(g.Status == InProgress, "game not in progress")
 
@@ -273,6 +273,15 @@ func SwapMove(payload *string) *string {
 
 	// ────────────── ADD ──────────────
 	case "add":
+		// allow skipping explicit "choose add" by directly sending placements
+		if st.Phase == swap2PhaseSwapChoice {
+			st.Phase = swap2PhaseExtraPlace
+			st.ExtraX, st.ExtraO = 0, 0
+			setNextActor(st, g, 2)
+			choice := "add"
+			EmitSwapEvent(g.ID, sender, "choose", nil, nil, &choice, ts)
+		}
+
 		adds := []string{}
 		for in != "" {
 			part := nextField(&in)

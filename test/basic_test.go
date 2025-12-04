@@ -169,6 +169,23 @@ func TestSqPlayGameCreatorLoseBy3(t *testing.T) {
 	CallContract(t, ct, "g_get", []byte("0"), nil, "hive:someone", true, uint(1_000_000_000), "", nil)
 }
 
+func TestTTTPlayGameNotYourTurnBug(t *testing.T) {
+	ct := SetupContractTest()
+	CallContract(t, ct, "g_create",
+		[]byte("1|XOXO|0.001"),
+		[]contracts.Intent{{Type: "transfer.allow", Args: map[string]string{"limit": "0.100", "token": "hive"}}},
+		"hive:diyhub", true, uint(1_000_000_000), "", nil)
+	CallContract(t, ct, "g_join", []byte("0"),
+		[]contracts.Intent{{Type: "transfer.allow", Args: map[string]string{"limit": "1.001", "token": "hive"}}},
+		"hive:tibfox.vsc", true, uint(1_000_000_000), "", nil)
+	CallContract(t, ct, "g_move", []byte("0|1|1"), nil, "hive:tibfox.vsc", true, uint(1_000_000_000), "", nil)
+	CallContract(t, ct, "g_move", []byte("0|0|0"), nil, "hive:diyhub", true, uint(1_000_000_000), "", nil)
+	CallContract(t, ct, "g_move", []byte("0|2|0"), nil, "hive:tibfox.vsc", true, uint(1_000_000_000), "", nil)
+	CallContract(t, ct, "g_move", []byte("0|0|1"), nil, "hive:diyhub", true, uint(1_000_000_000), "", nil)
+	CallContract(t, ct, "g_move", []byte("0|0|2"), nil, "hive:tibfox.vsc", true, uint(1_000_000_000), "", nil)
+
+}
+
 func TestTTTPlayGameResign(t *testing.T) {
 	ct := SetupContractTest()
 	CallContract(t, ct, "g_create",
@@ -182,6 +199,19 @@ func TestTTTPlayGameResign(t *testing.T) {
 	CallContract(t, ct, "g_move", []byte("0|0|1"), nil, "hive:someoneelse", true, uint(1_000_000_000), "", nil)
 	// CallContract(t, ct, "g_move", []byte("0|0|2"), nil, "hive:someoneelse", false, uint(1_000_000_000), "", nil)
 	CallContract(t, ct, "g_resign", []byte("0"), nil, "hive:someone", true, uint(1_000_000_000), "", nil)
+	CallContract(t, ct, "g_get", []byte("0"), nil, "hive:someone", true, uint(1_000_000_000), "", nil)
+}
+
+func TestTTTPlayGameResignNotYourTurn(t *testing.T) {
+	ct := SetupContractTest()
+	CallContract(t, ct, "g_create",
+		[]byte("1|XOXO|"),
+		[]contracts.Intent{{Type: "transfer.allow", Args: map[string]string{"limit": "1.000", "token": "hive"}}},
+		"hive:someone", true, uint(1_000_000_000), "", nil)
+	CallContract(t, ct, "g_join", []byte("0"),
+		[]contracts.Intent{{Type: "transfer.allow", Args: map[string]string{"limit": "1.000", "token": "hive"}}},
+		"hive:someoneelse", true, uint(1_000_000_000), "", nil)
+	CallContract(t, ct, "g_resign", []byte("0"), nil, "hive:someoneelse", true, uint(1_000_000_000), "", nil)
 	CallContract(t, ct, "g_get", []byte("0"), nil, "hive:someone", true, uint(1_000_000_000), "", nil)
 }
 
@@ -295,15 +325,15 @@ func TestTTTPlayGameNoMovesTimeout(t *testing.T) {
 	CallContract(t, ct, "g_timeout", []byte("0"), nil, "hive:someoneelse", true, uint(1_000_000_000), "", toStringPtr("2025-10-17T00:00:03"))
 }
 
-func TestGSetupLoop(t *testing.T) {
+func TestGSetupLoopSimple(t *testing.T) {
 	ct := SetupContractTest()
 	// create Gomoku game - waiting for someone to join
-	CallContract(t, ct, "g_create", []byte("3|Gomoku 4 Life|0.1"),
-		[]contracts.Intent{{Type: "transfer.allow", Args: map[string]string{"limit": "1.000", "token": "hive"}}},
+	CallContract(t, ct, "g_create", []byte("3|Gomoku 4 Life|"),
+		nil,
 		"hive:someone", true, uint(1_000_000_000), "", nil)
 	// someonelese joined
 	CallContract(t, ct, "g_join", []byte("0"),
-		[]contracts.Intent{{Type: "transfer.allow", Args: map[string]string{"limit": "1.000", "token": "hive"}}},
+		nil,
 		"hive:someoneelse", true, uint(1_000_000_000), "", nil)
 	// CallContract(t, ct, "g_move", []byte("0|0|0"), nil, "hive:someone", false, uint(1_000_000_000), "", nil)
 	// swap2 opening phase
@@ -312,9 +342,6 @@ func TestGSetupLoop(t *testing.T) {
 	// adding one more > should fail
 	// CallContract(t, ct, "g_swap", []byte("0|place|9|7|1"), nil, "hive:someone", false, uint(1_000_000_000), "", nil)
 	// opponent picks add and continues to put 2 more stones
-	// opponent chooses adding 2 more
-	CallContract(t, ct, "g_swap", []byte("0|choose|add"), nil, "hive:someoneelse", true, uint(1_000_000_000), "", nil)
-	//adds two more
 	CallContract(t, ct, "g_swap", []byte("0|add|9-8-2|6-7-1"), nil, "hive:someoneelse", true, uint(1_000_000_000), "", nil)
 
 	// creator now picks color of opponent (white)
@@ -350,9 +377,6 @@ func TestGSetupLoopFMP(t *testing.T) {
 	// adding one more > should fail
 	// CallContract(t, ct, "g_swap", []byte("0|place|9|7|1"), nil, "hive:someone", false, uint(1_000_000_000), "", nil)
 	// opponent picks add and continues to put 2 more stones
-	// opponent chooses adding 2 more
-	CallContract(t, ct, "g_swap", []byte("0|choose|add"), nil, "hive:someone", true, uint(1_000_000_000), "", nil)
-	//adds two more
 	CallContract(t, ct, "g_swap", []byte("0|add|9-8-2|6-7-1"), nil, "hive:someone", true, uint(1_000_000_000), "", nil)
 
 	// creator now picks color of opponent (white)
@@ -409,4 +433,78 @@ func TestGSetupLoopSwap(t *testing.T) {
 	CallContract(t, ct, "g_move", []byte("0|8|8"), nil, "hive:someoneelse", false, uint(1_000_000_000), "", nil)
 	// creator should be able to make a move
 	CallContract(t, ct, "g_move", []byte("0|8|8"), nil, "hive:someone", true, uint(1_000_000_000), "", nil)
+}
+
+func TestG6SetupLoopSimple(t *testing.T) {
+	ct := SetupContractTest()
+	// create Gomoku game - waiting for someone to join
+	CallContract(t, ct, "g_create", []byte("6|Gomoku 4 Life|"),
+		nil,
+		"hive:someone", true, uint(1_000_000_000), "", nil)
+	// someonelese joined
+	CallContract(t, ct, "g_join", []byte("0"),
+		nil,
+		"hive:someoneelse", true, uint(1_000_000_000), "", nil)
+	// CallContract(t, ct, "g_move", []byte("0|0|0"), nil, "hive:someone", false, uint(1_000_000_000), "", nil)
+	// swap2 opening phase
+	//creator places 3 stones
+	CallContract(t, ct, "g_swap", []byte("0|place|7-7-1|7-8-2|8-7-1"), nil, "hive:someone", true, uint(1_000_000_000), "", nil)
+	// adding one more > should fail
+	// CallContract(t, ct, "g_swap", []byte("0|place|9|7|1"), nil, "hive:someone", false, uint(1_000_000_000), "", nil)
+	// opponent picks add and continues to put 2 more stones
+	CallContract(t, ct, "g_swap", []byte("0|add|9-8-2|6-7-1"), nil, "hive:someoneelse", true, uint(1_000_000_000), "", nil)
+
+	// creator now picks color of opponent (white)
+	CallContract(t, ct, "g_swap", []byte("0|color|1"), nil, "hive:someone", true, uint(1_000_000_000), "", nil)
+	// creator tries to make a move > should fail
+	// CallContract(t, ct, "g_move", []byte("0|9|7"), nil, "hive:someone", false, uint(1_000_000_000), "", nil)
+	// oponent make a move > should succeed
+	CallContract(t, ct, "g_move", []byte("0|10|8"), nil, "hive:someoneelse", true, uint(1_000_000_000), "", nil)
+	// CallContract(t, ct, "g_get", []byte("0"), nil, "hive:someone", true, uint(1_000_000_000), "", nil)
+	CallContract(t, ct, "g_move", []byte("0|5|5"), nil, "hive:someone", true, uint(1_000_000_000), "", nil)
+	CallContract(t, ct, "g_move", []byte("0|11|8"), nil, "hive:someoneelse", true, uint(1_000_000_000), "", nil)
+	CallContract(t, ct, "g_move", []byte("0|6|5"), nil, "hive:someone", true, uint(1_000_000_000), "", nil)
+	CallContract(t, ct, "g_move", []byte("0|12|8"), nil, "hive:someoneelse", true, uint(1_000_000_000), "", nil)
+	CallContract(t, ct, "g_move", []byte("0|7|5"), nil, "hive:someone", true, uint(1_000_000_000), "", nil)
+	CallContract(t, ct, "g_move", []byte("0|8|8"), nil, "hive:someoneelse", true, uint(1_000_000_000), "", nil)
+
+	// CallContract(t, ct, "g_get", []byte("0"), nil, "hive:someone", true, uint(1_000_000_000), "", nil)
+}
+
+func TestGSetupLoopNoWinBy5plus(t *testing.T) {
+	ct := SetupContractTest()
+	// create Gomoku game - waiting for someone to join
+	CallContract(t, ct, "g_create", []byte("3|Gomoku 4 Life|"),
+		nil,
+		"hive:someone", true, uint(1_000_000_000), "", nil)
+	// someonelese joined
+	CallContract(t, ct, "g_join", []byte("0"),
+		nil,
+		"hive:someoneelse", true, uint(1_000_000_000), "", nil)
+	// CallContract(t, ct, "g_move", []byte("0|0|0"), nil, "hive:someone", false, uint(1_000_000_000), "", nil)
+	// swap2 opening phase
+	//creator places 3 stones
+	CallContract(t, ct, "g_swap", []byte("0|place|7-7-1|7-8-2|8-7-1"), nil, "hive:someone", true, uint(1_000_000_000), "", nil)
+	// adding one more > should fail
+	// CallContract(t, ct, "g_swap", []byte("0|place|9|7|1"), nil, "hive:someone", false, uint(1_000_000_000), "", nil)
+	// opponent picks add and continues to put 2 more stones
+	CallContract(t, ct, "g_swap", []byte("0|add|9-8-2|6-7-1"), nil, "hive:someoneelse", true, uint(1_000_000_000), "", nil)
+
+	// creator now picks color of opponent (white)
+	CallContract(t, ct, "g_swap", []byte("0|color|1"), nil, "hive:someone", true, uint(1_000_000_000), "", nil)
+	// creator tries to make a move > should fail
+	// CallContract(t, ct, "g_move", []byte("0|9|7"), nil, "hive:someone", false, uint(1_000_000_000), "", nil)
+	// oponent make a move > should succeed
+	CallContract(t, ct, "g_move", []byte("0|10|8"), nil, "hive:someoneelse", true, uint(1_000_000_000), "", nil)
+	// CallContract(t, ct, "g_get", []byte("0"), nil, "hive:someone", true, uint(1_000_000_000), "", nil)
+	CallContract(t, ct, "g_move", []byte("0|5|5"), nil, "hive:someone", true, uint(1_000_000_000), "", nil)
+	CallContract(t, ct, "g_move", []byte("0|11|8"), nil, "hive:someoneelse", true, uint(1_000_000_000), "", nil)
+	CallContract(t, ct, "g_move", []byte("0|6|5"), nil, "hive:someone", true, uint(1_000_000_000), "", nil)
+	CallContract(t, ct, "g_move", []byte("0|12|8"), nil, "hive:someoneelse", true, uint(1_000_000_000), "", nil)
+	CallContract(t, ct, "g_move", []byte("0|7|5"), nil, "hive:someone", true, uint(1_000_000_000), "", nil)
+	CallContract(t, ct, "g_move", []byte("0|8|8"), nil, "hive:someoneelse", true, uint(1_000_000_000), "", nil)
+	CallContract(t, ct, "g_move", []byte("0|9|7"), nil, "hive:someone", true, uint(1_000_000_000), "", nil)
+	CallContract(t, ct, "g_move", []byte("0|6|8"), nil, "hive:someoneelse", true, uint(1_000_000_000), "", nil)
+	CallContract(t, ct, "g_move", []byte("0|10|7"), nil, "hive:someone", true, uint(1_000_000_000), "", nil)
+	// CallContract(t, ct, "g_get", []byte("0"), nil, "hive:someone", true, uint(1_000_000_000), "", nil)
 }

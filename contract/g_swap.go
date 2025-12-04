@@ -16,7 +16,7 @@ func swap2Key(id uint64) string { return "g_" + UInt64ToString(id) + "_swap2" }
 // initSwap2IfGomokuBinary creates a fresh swap2 state for Gomoku only.
 // Other game modes skip this logic entirely.
 func initSwap2IfGomokuBinary(g *Game) {
-	if g.Type != Gomoku {
+	if g.Type != Gomoku && g.Type != GomokuFreestyle {
 		return
 	}
 	roleX := uint8(1)
@@ -97,7 +97,7 @@ func swapPlaceOpening(g *Game, st *swap2StateBinary, sender string, a1, a2, a3 s
 
 	ts := parseISO8601ToUnix(*sdk.GetEnvKey("block.timestamp"))
 	newMv := mv + 1
-	appendMoveBinary(g.ID, newMv, row, col, ts, g.CreatedAt)
+	appendMoveBinary(g.ID, newMv, row, col, cell, ts, g.CreatedAt)
 	writeMoveCount(g.ID, newMv)
 	setCellGrid(grid, row, col, cell)
 
@@ -135,7 +135,7 @@ func swapAddExtra(g *Game, st *swap2StateBinary, sender string, a1, a2, a3 strin
 
 	ts := parseISO8601ToUnix(*sdk.GetEnvKey("block.timestamp"))
 	newMv := mv + 1
-	appendMoveBinary(g.ID, newMv, row, col, ts, g.CreatedAt)
+	appendMoveBinary(g.ID, newMv, row, col, cell, ts, g.CreatedAt)
 	writeMoveCount(g.ID, newMv)
 	setCellGrid(grid, row, col, cell)
 

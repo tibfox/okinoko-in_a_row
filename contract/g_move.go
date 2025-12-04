@@ -58,17 +58,17 @@ func writeMoveCount(id uint64, n uint64) {
 	sdk.StateSetObject(moveCountKey(id), UInt64ToString(n))
 }
 
-// appendMoveBinary records a move in a compact 6-byte form
-// (row, col, and a 4-byte delta timestamp since game start).
+// appendMoveBinary records a move in a compact 7-byte form
+// (row, col, mark, and a 4-byte delta timestamp since game start).
 // Row and col are stored as single bytes to keep storage tight.
-func appendMoveBinary(id uint64, n uint64, row, col int, ts uint64, createdAt uint64) {
+func appendMoveBinary(id uint64, n uint64, row, col int, mark Cell, ts uint64, createdAt uint64) {
 	if ts < createdAt {
 		sdk.Abort("timestamp before game creation")
 	}
 	delta := uint32(ts - createdAt)
 
-	out := make([]byte, 0, 6)
-	out = append(out, byte(row), byte(col))
+	out := make([]byte, 0, 7)
+	out = append(out, byte(row), byte(col), byte(mark))
 
 	var buf [4]byte
 	binary.BigEndian.PutUint32(buf[:], delta)
@@ -77,18 +77,19 @@ func appendMoveBinary(id uint64, n uint64, row, col int, ts uint64, createdAt ui
 	sdk.StateSetObject(moveKey(id, n), string(out))
 }
 
-// readMoveBinary loads a move and recovers row, col and the
+// readMoveBinary loads a move and recovers row, col, mark and the
 // absolute timestamp by adding the stored delta to creation time.
-func readMoveBinary(id uint64, n uint64, createdAt uint64) (row, col int, ts uint64) {
+func readMoveBinary(id uint64, n uint64, createdAt uint64) (row, col int, mark Cell, ts uint64) {
 	ptr := sdk.StateGetObject(moveKey(id, n))
 	require(ptr != nil && *ptr != "", "move "+UInt64ToString(n)+" missing")
 
 	data := []byte(*ptr)
-	require(len(data) >= 6, "corrupt move data")
+	require(len(data) >= 7, "corrupt move data")
 
 	row = int(data[0])
 	col = int(data[1])
-	delta := binary.BigEndian.Uint32(data[2:6])
+	mark = Cell(data[2])
+	delta := binary.BigEndian.Uint32(data[3:7])
 	ts = createdAt + uint64(delta)
 	return
 }
@@ -110,7 +111,7 @@ func computeCurrentTurn(mvCount uint64) Cell {
 // require the target cell to be empty.
 func applyMoveOnGrid(g *Game, grid [][]Cell, row, col int, mark Cell) (appliedRow int, appliedCol int) {
 	switch g.Type {
-	case TicTacToe, Gomoku, TicTacToe5, Squava:
+	case TicTacToe, Gomoku, TicTacToe5, Squava, GomokuFreestyle:
 		require(getCellGrid(grid, row, col) == Empty, "cell occupied")
 		setCellGrid(grid, row, col, mark)
 		return row, col
@@ -203,11 +204,11 @@ func finalizeIfWinOrDraw(g *Game, grid [][]Cell, row, col int, mark Cell, mvCoun
 
 // appendMoveCommit stores a move with current timestamp and bumps
 // the move counter. Call this after validating and applying the move.
-func appendMoveCommit(g *Game, mvCount uint64, row, col int) uint64 {
+func appendMoveCommit(g *Game, mvCount uint64, row, col int, mark Cell) uint64 {
 	newID := mvCount + 1
 	tsString := *sdk.GetEnvKey("block.timestamp")
 	unixTS := parseISO8601ToUnix(tsString)
-	appendMoveBinary(g.ID, newID, row, col, unixTS, g.CreatedAt)
+	appendMoveBinary(g.ID, newID, row, col, mark, unixTS, g.CreatedAt)
 	writeMoveCount(g.ID, newID)
 	return newID
 }

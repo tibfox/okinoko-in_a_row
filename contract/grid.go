@@ -25,13 +25,7 @@ func reconstructBoard(g *Game) ([][]Cell, uint64) {
 	createdAt := g.CreatedAt
 
 	for i := uint64(1); i <= count; i++ {
-		r, c, _ := readMoveBinary(g.ID, i, createdAt)
-		var ch Cell
-		if i%2 == 1 {
-			ch = X
-		} else {
-			ch = O
-		}
+		r, c, ch, _ := readMoveBinary(g.ID, i, createdAt)
 		grid[r][c] = ch
 	}
 
@@ -153,6 +147,8 @@ func boardDimensions(gt GameType) (int, int) {
 	case ConnectFour:
 		return 6, 7
 	case Gomoku:
+		return 15, 15
+	case GomokuFreestyle:
 		return 15, 15
 	default:
 		sdk.Abort("invalid game type")

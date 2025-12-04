@@ -26,10 +26,10 @@ Players interact through WASM-exported functions using human-readable, `|`-delim
 | ----- | ------------------------------------------------------------------------- | ------- | ---------------------- | ---------------------------------------------------------------------- | ---------------------- |
 | 1     | [Tic Tac Toe](https://en.wikipedia.org/wiki/Tic-tac-toe)                  | 3 × 3   | 3 in a row             | FMP or Standard                                                        | –                      |
 | 2     | [Connect Four / Vier Gewinnt](https://en.wikipedia.org/wiki/Connect_Four) | 6 × 7   | 4 or more in a row     | FMP or Standard                                                        | –                      |
-| 3     | [Gomoku Freestyle](https://en.wikipedia.org/wiki/Gomoku)                  | 15 × 15 | 5 or more in a row     | FMP + [Swap2](https://en.wikipedia.org/wiki/Gomoku#Swap2) fair opening | –                      |
+| 3     | [Gomoku Standard](https://en.wikipedia.org/wiki/Gomoku)                  | 15 × 15 | **Exactly 5 in a row**     | FMP + [Swap2](https://en.wikipedia.org/wiki/Gomoku#Swap2) fair opening | –                      |
 | 4     | Tic Tac Toe 5                                                             | 5 × 5   | 4 or more in a row     | FMP or Standard                                                        | –                      |
 | 5     | [Squava](https://nestorgames.com/rulebooks/SQUAVA_EN.pdf)                 | 5 × 5   | 4 or more in a row     | FMP or Standard                                                        | **Lose if 3 in a row** |
-| 6     | [Gomoku Standard](https://en.wikipedia.org/wiki/Gomoku)                   | 15 × 15 | **Exactly 5 in a row** | FMP + Swap2 opening                                                    | –                      |
+| 6     | [Gomoku Freestyle](https://en.wikipedia.org/wiki/Gomoku)                   | 15 × 15 | 5+ in a row | FMP + Swap2 opening                                                    | –                      |
 
 **FMP (First Move Purchase):**
 For greater fairness, the creator can define a “first move cost.”
@@ -84,7 +84,7 @@ For Gomoku, joining automatically enters the **Swap2 opening phase**.
 | Stage        | Input Format                                             | Description                                                   |
 | ------------ | -------------------------------------------------------- | ------------------------------------------------------------- |
 | Opening      | `id\|place\|row-col-color\|row-col-color\|row-col-color` | First player places 3 stones (2 of one color, 1 of the other) |
-| Swap Choice  | `id\|choose\|swap \| stay \| add`                        | Second player’s decision                                      |
+| Swap Choice  | `id\|choose\|swap \| stay \| add (see Extra Stones below)`                        | Second player’s decision                                      |
 | Extra Stones | `id\|add\|row-col-color\|row-col-color`                  | If “add” chosen, place 2 additional stones                    |
 | Final Color  | `id\|color\|1 or 2`                                      | First player selects their final color                             |
 
@@ -165,7 +165,7 @@ stateDiagram-v2
     [*] --> Opening: 1st Player places 3 stones (2 X, 1 O)
     Opening --> 2ndPlayer_SwapChoice: after 3 stones placed
     2ndPlayer_SwapChoice --> NormalPlay: choose stay  (Players stay the same)
-    2ndPlayer_SwapChoice --> ExtraPlace: choose add
+    2ndPlayer_SwapChoice --> ExtraPlace: send add placements
     2ndPlayer_SwapChoice --> NormalPlay: choose swap (Players switch)
     ExtraPlace --> 1stPlayer_ColorChoice: 2 extra stones placed (by 2nd Player)
     1stPlayer_ColorChoice --> NormalPlay: creator picks X or O
@@ -181,7 +181,6 @@ stateDiagram-v2
 g_create: "3|Gomoku"
 g_join:   "0"
 g_swap:   "0|place|7-7-1|7-8-2|8-7-1"
-g_swap:   "0|choose|add"
 g_swap:   "0|add|8-8-2|6-7-1"
 g_swap:   "0|color|2"
 g_move:   "0|10|7"  ← first normal move (Bob plays X)

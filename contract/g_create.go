@@ -59,7 +59,7 @@ func parseCreateArgs(payload *string) (gt GameType, name string, fmc uint64) {
 
 	gt = GameType(parseU8Fast(typStr))
 	require(
-		gt == TicTacToe || gt == ConnectFour || gt == Gomoku || gt == TicTacToe5 || gt == Squava,
+		gt == TicTacToe || gt == ConnectFour || gt == Gomoku || gt == TicTacToe5 || gt == Squava || gt == GomokuFreestyle,
 		"invalid type",
 	)
 

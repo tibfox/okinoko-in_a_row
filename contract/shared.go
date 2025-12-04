@@ -158,7 +158,7 @@ func loadMetaBinary(id uint64) *Game {
 	// Now compute LastMoveAt from moves if any
 	count := readMoveCount(id)
 	if count > 0 {
-		_, _, ts := readMoveBinary(id, count, createdAt)
+		_, _, _, ts := readMoveBinary(id, count, createdAt)
 		g.LastMoveAt = ts
 	}
 
@@ -184,7 +184,7 @@ func loadGame(id uint64) *Game {
 	// ---- Apply last move time from binary moves ----
 	count := readMoveCount(id)
 	if count > 0 {
-		_, _, lastTs := readMoveBinary(id, count, g.CreatedAt)
+		_, _, _, lastTs := readMoveBinary(id, count, g.CreatedAt)
 		g.LastMoveAt = lastTs
 	} else {
 		g.LastMoveAt = g.CreatedAt
